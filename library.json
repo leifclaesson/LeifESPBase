@@ -1,0 +1,22 @@
+{
+  "name":"LeifESPBase",
+  "description":"Base library for ESP8266/ESP32",
+  "keywords":"",
+  "authors":
+  {
+    "name": "Leif Claesson",
+    "maintainer": true
+  },
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/liket/LeifESPBase.git"
+  },
+  "version": "0.0.1",
+  "license": "LGPL-3.0",
+  "frameworks": "arduino",
+  "platforms": "espressif8266","espressif32"
+  "build": {
+    "libCompatMode": 2
+  }  
+}
