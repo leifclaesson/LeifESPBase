@@ -83,6 +83,7 @@ void LeifSetupBegin()
 
 	WiFi.mode(WIFI_STA);
 
+	csprintf("Using WiFi SSID: %s\n",wifi_ssid);
 
 #if defined(WIFI_RECONNECT)
 	WiFi.setAutoConnect(false);
@@ -431,7 +432,7 @@ void LeifLoop()
 		  if((millis()-ulWifiReconnect)>=15000)
 		  {
 			  ulWifiReconnect=millis();
-			  csprintf("WiFi attempting to reconnect...\n");
+			  csprintf("WiFi attempting to reconnect to %s...\n",wifi_ssid);
 			  WiFi.reconnect();
 
 		  }
