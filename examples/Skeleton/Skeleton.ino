@@ -1,6 +1,6 @@
 #include <LeifESPBase.h>
 
-// *** Don't forget to add your WiFi SSID/Key to LeifESPBase\environment_setup.h ***
+// *** Don't forget to add your WiFi SSID/Key to LeifESPBase\environment_setup.h See environment_setup.h.example for details. ***
 
 
 //The code keeps track of whether it's running on a production unit
