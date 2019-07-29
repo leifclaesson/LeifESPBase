@@ -41,6 +41,7 @@ void LeifHtmlMainPageCommonHeader(String & string);
 
 bool Interval100();
 bool Interval250();
+bool Interval500();
 bool Interval1000();
 bool Interval10s();
 

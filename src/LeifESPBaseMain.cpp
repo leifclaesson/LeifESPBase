@@ -252,11 +252,13 @@ static unsigned long ulLastDayMillis=0;
 unsigned long ulLastLoopMillis=0;
 
 static unsigned long ulLastLoopSecond=0;
+static unsigned long ulLastLoopHalfSecond=0;
 static unsigned long ulLastLoopQuarterSecond=0;
 static unsigned long ulLastLoopDeciSecond=10;
 
 static bool bInterval100=false;
 static bool bInterval250=false;
+static bool bInterval500=false;
 static bool bInterval1000=false;
 static bool bInterval10s=false;
 
@@ -275,6 +277,11 @@ bool Interval100()
 bool Interval250()
 {
 	return bInterval250;
+}
+
+bool Interval500()
+{
+	return bInterval500;
 }
 
 bool Interval1000()
@@ -373,7 +380,19 @@ void LeifLoop()
 		  bInterval1000=false;
 	  }
 
-	  if((int) (ulLastLoopMillis-ulLastLoopQuarterSecond)>=100)
+ 	  if((int) (ulLastLoopMillis-ulLastLoopHalfSecond)>=500)
+	  {
+		  ulLastLoopHalfSecond+=500;
+		  bInterval500=true;
+	  }
+	  else
+	  {
+		  bInterval500=false;
+
+	  }
+
+
+	  if((int) (ulLastLoopMillis-ulLastLoopQuarterSecond)>=250)
 	  {
 		  ulLastLoopQuarterSecond+=250;
 		  bInterval250=true;
