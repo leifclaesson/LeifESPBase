@@ -14,7 +14,6 @@
 #include <ArduinoOTA.h>
 #endif
 
-
 #include "..\environment_setup.h"
 
 
@@ -249,8 +248,6 @@ void LeifSetupEnd()
 
 }
 
-static int iDayCount=0;
-static unsigned long ulLastDayMillis=0;
 unsigned long ulLastLoopMillis=0;
 
 static unsigned long ulLastLoopSecond=0;
@@ -296,27 +293,54 @@ bool Interval10s()
 	return bInterval10s;
 }
 
-void LeifUptimeString(String & string)
+void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds)
 {
-	char temp[128];
-	if(iDayCount>30)
-	{
-		sprintf(temp,"%i days",iDayCount);
 
+	unsigned long ulDays=ulSeconds/86400;
+
+	if(ulDays>30)
+	{
+		if(ulDays>365)
+		{
+			char temp[32];
+			sprintf(temp,"%luy %lud",ulDays/366,ulDays % 366);
+			string=temp;
+		}
+		else
+		{
+			unsigned long ulHours=(ulSeconds - (ulDays*86400))/3600;
+			char temp[32];
+			sprintf(temp,"%lud %luh",ulDays,ulHours);
+			string=temp;
+		}
 	}
 	else
 	{
-
-		sprintf(temp,"%lud %02lu:%02lu:%02lu",
-			(ulLastLoopMillis / 86400000),
-			(ulLastLoopMillis / 3600000) % 24,
-			(ulLastLoopMillis / 60000) % 60,
-			(ulLastLoopMillis / 1000) % 60
-			);
+		char temp[128];
+		if(ulDays==0)
+		{
+			sprintf(temp,"%02lu:%02lu:%02lu",
+				(ulSeconds / 3600) % 24,
+				(ulSeconds / 60) % 60,
+				(ulSeconds) % 60
+				);
+		}
+		else
+		{
+			sprintf(temp,"%lud %02lu:%02lu:%02lu",
+				(ulSeconds / 86400),
+				(ulSeconds / 3600) % 24,
+				(ulSeconds / 60) % 60,
+				(ulSeconds) % 60
+				);
+		}
+		string=temp;
 	}
+}
 
-	string=temp;
-
+void LeifUptimeString(String & string)
+{
+	LeifSecondsToUptimeString(string,seconds());
 }
 
 
@@ -354,12 +378,6 @@ void LeifLoop()
 
 
 	  ulLastLoopMillis=millis();
-	  if((int) (ulLastLoopMillis-ulLastDayMillis)>86400000)
-	  {
-		  ulLastDayMillis=ulLastLoopMillis;
-		  iDayCount++;
-	  }
-
 
 
 	  if(bInterval1000 && ulSecondCounter % 10 == 0)

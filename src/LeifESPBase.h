@@ -49,6 +49,9 @@ void LeifSetStatusLedPin(int iPin);	//-1 to disable
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
+
+void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds);
+
 void LeifUptimeString(String & string);
 
 unsigned long seconds();
