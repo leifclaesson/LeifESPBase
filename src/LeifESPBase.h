@@ -31,6 +31,8 @@ extern WiFiClient telnetClients;
 const char * GetHostName();
 const char * GetHeadingText();
 
+#define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); }
+
 
 void LeifSetupBegin();
 void LeifSetupEnd();

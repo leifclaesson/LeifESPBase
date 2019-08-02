@@ -514,6 +514,8 @@ void LeifLoop()
 }
 
 
+char szExtCompileDate[32]={0};
+
 void LeifHtmlMainPageCommonHeader(String & string)
 {
 
@@ -534,7 +536,14 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 	string.concat("<td>");
 	string.concat("Compile time: ");
-	string.concat(compile_date);
+	if(strlen(szExtCompileDate))
+	{
+		string.concat(szExtCompileDate);
+	}
+	else
+	{
+		string.concat(compile_date);
+	}
 	string.concat("</td>");
 	string.concat("</tr>");
 
