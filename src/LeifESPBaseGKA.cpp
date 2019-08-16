@@ -33,7 +33,10 @@ void LeifGatewayKeepalive(const char * szPingIP)
 
 		LeifSetSuppressLedWrite(true);
 
-		digitalWrite(LeifGetStatusLedPin(), (millis()%100)<50?true:false);
+		if(LeifGetStatusLedPin()>=0)
+		{
+			digitalWrite(LeifGetStatusLedPin(), (millis()%100)<50?true:false);
+		}
 
 		if((int) (millis()-ulGatewayKeepaliveRestartMillis)>5000)
 		{
