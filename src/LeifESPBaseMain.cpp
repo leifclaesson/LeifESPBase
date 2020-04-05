@@ -562,6 +562,22 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat(WiFi.localIP().toString());
 	string.concat("</td>");
 	string.concat("</tr>");
+
+
+	string.concat("<tr>");
+	string.concat("<td>");
+	string.concat("BSSID: ");
+	string.concat(WiFi.BSSIDstr());
+	string.concat("</td>");
+	string.concat("<td>");
+	string.concat("SSID: ");
+	string.concat(WiFi.SSID());
+	string.concat("&nbsp;&nbsp;&nbsp;RSSI: ");
+	string.concat(WiFi.RSSI());
+	string.concat("</td>");
+	string.concat("</tr>");
+
+
 	string.concat("</table>");
 
 	string.concat("<br>");
