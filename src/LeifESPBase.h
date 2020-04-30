@@ -34,6 +34,10 @@ const char * GetHeadingText();
 #define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); }
 
 
+void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
+IPAddress LeifGetAccessPointIP();
+
+void LeifSetupConsole();	//can be called before LeifSetupBegin
 void LeifSetupBegin();
 void LeifSetupEnd();
 
@@ -51,16 +55,21 @@ void LeifSetStatusLedPin(int iPin);	//-1 to disable
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
+bool IsNewWifiConnection();	//returns true ONCE after a new wifi connection has been established
 
 void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds);
 
 void LeifUptimeString(String & string);
+
+String LeifGetCompileDate();
 
 unsigned long seconds();
 
 int HttpRequest(const char * url, int retries=3);
 int HttpPost(String & url, String & payload, int retries=3);
 byte chartohex(char asciichar);
+
+uint32_t LeifGetTotalWifiConnectionAttempts();
 
 
 #ifdef USE_HOMIE

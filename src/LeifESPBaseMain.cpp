@@ -44,8 +44,11 @@ int disconnectedClient = 1;
 
 
 #if defined(WIFI_RECONNECT)
-unsigned long ulWifiReconnect=millis()-10000;
+unsigned long ulWifiReconnect=millis()-15000;
+int iWifiConnAttempts=0;
+uint32_t ulWifiTotalConnAttempts=0;
 #endif
+
 
 
 static std::vector<LeifOnShutdownCallback> vecOnShutdown;
@@ -56,6 +59,17 @@ void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb)
 
 }
 
+
+LeifHttpMainTableCallback fnHttpMainTableCallback;
+
+void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb)
+{
+	fnHttpMainTableCallback=cb;
+}
+
+
+
+
 void DoOnShutdownCallback(const char * pszReason)
 {
 	for(size_t i=0;i<vecOnShutdown.size();i++)
@@ -65,15 +79,169 @@ void DoOnShutdownCallback(const char * pszReason)
 
 }
 
+uint8_t cBSSID[6]={0,0,0,0,0,0};
+int iWifiChannel=-1;
+bool bAllowBSSID=false;
 
 
-void LeifSetupBegin()
+
+
+
+bool ParseMacAddress(const char * pszMAC, uint8_t * cMacOut)
 {
+	if(strlen(pszMAC)==17)
+	{
+		const char * temp=pszMAC;
+		for(int i=0;i<6;i++)
+		{
+			cMacOut[i]=0;
+			for(int j=0;j<2;j++)
+			{
+				unsigned char hex=0;
+				if(*temp>='0' && *temp<='9') hex=*temp-'0';
+				else if(*temp>='A' && *temp<='F') hex=*temp-'A'+0xa;
+				else if(*temp>='a' && *temp<='f') hex=*temp-'a'+0xa;
+				cMacOut[i] |= (hex << (4*(1-j)));
+				temp++;
+			}
+			temp++;
+		}
+		return true;
+	}
+	else
+	{
+		memset(cMacOut,0,6);
+		return false;
+	}
+}
+
+static IPAddress ipAccessPoint;
+
+IPAddress LeifGetAccessPointIP()
+{
+	if(iWifiChannel>=0 && !memcmp(WiFi.BSSID(),cBSSID,6))
+	{
+		return ipAccessPoint;
+	}
+
+	return IPAddress(0,0,0,0);
+}
+
+void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP)
+{
+
+
+
+	if(pszBSSID && ParseMacAddress(pszBSSID,cBSSID))
+	{
+		bAllowBSSID=true;
+		iWifiChannel=ch;
+		ipAccessPoint.fromString(pszAccessPointIP);
+	}
+	else
+	{
+		iWifiChannel=-1;
+		ipAccessPoint=IPAddress(0,0,0,0);
+	}
+}
+
+
+bool bNewWifiConnection=false;
+
+bool IsNewWifiConnection()
+{
+	//returns true ONCE after a new wifi connection has been established
+	bool bRet=bNewWifiConnection;
+	bNewWifiConnection=false;
+
+	return bRet;
+}
+
+
+class MyESP8266WiFiSTAClass: public ESP8266WiFiSTAClass
+{
+public:
+	static bool GetIsStatic()
+	{
+		void * mypointer=&WiFi;
+		return ((MyESP8266WiFiSTAClass *) mypointer)->_useStaticIp;
+	}
+
+};
+
+
+/*
+void onStationModeDisconnectedEvent(const WiFiEventStationModeDisconnected& evt)
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    WiFi.disconnect();
+  } else {
+    Serial.println("         WiFi disconnected...");
+  }
+}
+*/
+
+void SetupWifiInternal()
+{
+	WiFi.hostname(GetHostName());
+#if defined(WIFI_RECONNECT)
+	WiFi.setAutoConnect(false);
+	WiFi.setAutoReconnect(false);
+
+	//WiFi.onStationModeDisconnected(onStationModeDisconnectedEvent);
+
+
+	if(iWifiChannel>=0 && bAllowBSSID)
+	{
+	  csprintf("WiFi attempting to connect to %s at BSSID %02X:%02X:%02X:%02X:%02X:%02X, Ch %i (attempt %i)...\n",wifi_ssid,cBSSID[0],cBSSID[1],cBSSID[2],cBSSID[3],cBSSID[4],cBSSID[5],iWifiChannel,iWifiConnAttempts);
+//		csprintf("Using BSSID %02x:%02x:%02x:%02x:%02x:%02x CH %i\n",cBSSID[0],cBSSID[1],cBSSID[2],cBSSID[3],cBSSID[4],cBSSID[5],iWifiChannel);
+		WiFi.begin(wifi_ssid, wifi_key,iWifiChannel,cBSSID,true);
+	}
+	else
+	{
+//		csprintf("No BSSID configured\n");
+
+		const char * use_ssid=wifi_ssid;
+
+		if(backup_ssid)
+		{
+			int x=iWifiConnAttempts/2;
+			if(x && (x & 1))
+			{
+				use_ssid=backup_ssid;
+			}
+		}
+
+		csprintf("WiFi attempting to connect to %s (attempt %i)...\n",use_ssid,iWifiConnAttempts);
+		WiFi.begin(use_ssid, wifi_key);
+	}
+#else
+//	csprintf("Using Auto Reconnect\n");
+	WiFi.begin(wifi_ssid, wifi_key);
+	WiFi.setAutoConnect(true);
+	WiFi.setAutoReconnect(true);
+#endif
+}
+
+bool bConsoleInitDone=false;
+void LeifSetupConsole()
+{
+	if(bConsoleInitDone) return;
+
 #ifndef NO_SERIAL_DEBUG
 	Serial.begin(115200);
 #endif
 
+	bConsoleInitDone=true;
+
 	csprintf("\nBooting...\n");
+
+};
+
+void LeifSetupBegin()
+{
+	LeifSetupConsole();
 
 	if(iStatusLedPin>=0)
 	{
@@ -84,17 +252,6 @@ void LeifSetupBegin()
 	WiFi.mode(WIFI_STA);
 
 	csprintf("Using WiFi SSID: %s\n",wifi_ssid);
-
-#if defined(WIFI_RECONNECT)
-	WiFi.setAutoConnect(false);
-	WiFi.setAutoReconnect(false);
-	WiFi.begin(wifi_ssid, wifi_key);
-#else
-	WiFi.begin(wifi_ssid, wifi_key);
-	WiFi.setAutoConnect(true);
-	WiFi.setAutoReconnect(true);
-#endif
-
 	csprintf("MAC address: %s\n",WiFi.macAddress().c_str());
 	csprintf("Host name: %s\n",GetHostName());
 
@@ -161,7 +318,9 @@ void LeifSetupBegin()
 #endif
 		}
 
-	    delay(50);
+	    delay(1000);
+		ESP.restart();
+	    delay(500);
 	});
 
 	ArduinoOTA.onError([](ota_error_t error)
@@ -230,7 +389,11 @@ void LeifSetupBegin()
 
 		sprintf(temp,"Flash ide size...: %u bytes\n", ideSize); s+=temp;
 		sprintf(temp,"Flash ide speed..: %u Hz\n", ESP.getFlashChipSpeed()); s+=temp;
-		sprintf(temp,"Flash ide mode...: %s\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN")); s+=temp;
+		sprintf(temp,"Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN")); s+=temp;
+
+		sprintf(temp,"Heap free........: %i\n",ESP.getFreeHeap()); s+=temp;
+		sprintf(temp,"Heap max free....: %i\n",ESP.getMaxFreeBlockSize()); s+=temp;
+		//sprintf(temp,"Heap frag........: %i\n",ESP.getHeapFragmentation()); s+=temp;
 
 		server.send(200, "text/plain", s);
 	});
@@ -440,7 +603,11 @@ void LeifLoop()
 		  if(!bIpPrinted)
 		  {
 			  bIpPrinted=true;
-			  csprintf("IP: %s\n",WiFi.localIP().toString().c_str());
+			  csprintf("IP: %s%s, SSID %s, BSSID %s, Ch %i\n",WiFi.localIP().toString().c_str(),MyESP8266WiFiSTAClass::GetIsStatic()?" (static)":" (DHCP)",WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(),WiFi.channel());
+			  csprintf("Gateway: %s\n",WiFi.gatewayIP().toString().c_str());
+			  iWifiConnAttempts=0;
+			  bAllowBSSID=true;
+			  bNewWifiConnection=true;
 		  }
 
 	  }
@@ -451,9 +618,17 @@ void LeifLoop()
 		  if((millis()-ulWifiReconnect)>=15000)
 		  {
 			  ulWifiReconnect=millis();
-			  csprintf("WiFi attempting to reconnect to %s...\n",wifi_ssid);
-			  WiFi.reconnect();
 
+			  if(iWifiConnAttempts>=1 && bAllowBSSID)
+			  {
+				  bAllowBSSID=false;
+			  }
+
+			  SetupWifiInternal();
+
+			  WiFi.reconnect();
+			  iWifiConnAttempts++;
+			  ulWifiTotalConnAttempts++;
 		  }
 #endif
 	  }
@@ -521,7 +696,13 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 	string.concat("<table>");
 
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_BeforeFirstRow);
+
+
 	string.concat("<tr>");
+
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_InsideFirstRow);
+
 	string.concat("<td>");
 
 	string.concat("Uptime: ");
@@ -529,22 +710,20 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	String strUptime;
 	LeifUptimeString(strUptime);
 	string.concat(strUptime);
-	const char compile_date[] = __DATE__ " " __TIME__;
+
 
 	string.concat("</td>");
 
 
 	string.concat("<td>");
 	string.concat("Compile time: ");
-	if(strlen(szExtCompileDate))
-	{
-		string.concat(szExtCompileDate);
-	}
-	else
-	{
-		string.concat(compile_date);
-	}
+
+	string.concat(LeifGetCompileDate());
+
 	string.concat("</td>");
+
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_InsideFirstRowEnd);
+
 	string.concat("</tr>");
 
 	string.concat("<tr>");
@@ -558,27 +737,75 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;");
 	string.concat("</td>");
 	string.concat("<td>");
+	if(MyESP8266WiFiSTAClass::GetIsStatic()) string.concat("<font color=\"green\">");
 	string.concat("IP: ");
 	string.concat(WiFi.localIP().toString());
+	if(MyESP8266WiFiSTAClass::GetIsStatic()) string.concat("</font>");
 	string.concat("</td>");
 	string.concat("</tr>");
 
 
 	string.concat("<tr>");
+
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_InsideLastRow);
+
 	string.concat("<td>");
+
+	int bssid_color=0;
+
+	if(iWifiChannel>=0)
+	{
+		if(memcmp(WiFi.BSSID(),cBSSID,6))
+		{
+			bssid_color=-1;
+		}
+		else
+		{
+			bssid_color=1;
+		}
+	}
+
+	switch(bssid_color)
+	{
+	case -1:
+		string.concat("<font color=\"red\">");
+		break;
+	case 1:
+		string.concat("<font color=\"green\">");
+		break;
+	}
+
 	string.concat("BSSID: ");
 	string.concat(WiFi.BSSIDstr());
+
+	string.concat("&nbsp;&nbsp;&nbsp;CH: ");
+	string.concat(WiFi.channel());
+
+	if(bssid_color)
+	{
+		string.concat("</font>");
+	}
+
 	string.concat("</td>");
 	string.concat("<td>");
+
+	bool bWrongWifi=strcmp(wifi_ssid,WiFi.SSID().c_str());
+
+	if(bWrongWifi) string.concat("<font color=\"red\">");
 	string.concat("SSID: ");
 	string.concat(WiFi.SSID());
+	if(bWrongWifi) string.concat("</font>");
+
 	string.concat("&nbsp;&nbsp;&nbsp;RSSI: ");
 	string.concat(WiFi.RSSI());
 	string.concat("</td>");
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_InsideLastRowEnd);
 	string.concat("</tr>");
-
+	if(fnHttpMainTableCallback) fnHttpMainTableCallback(string,eHttpMainTable_AfterLastRow);
 
 	string.concat("</table>");
+
+
 
 	string.concat("<br>");
 
@@ -604,3 +831,24 @@ byte chartohex(char asciichar)
 	return 0;
 }
 
+
+
+String LeifGetCompileDate()
+{
+	const char compile_date[] = __DATE__ " " __TIME__;
+	if(strlen(szExtCompileDate))
+	{
+		return szExtCompileDate;
+	}
+	else
+	{
+		return compile_date;
+	}
+
+}
+
+
+uint32_t LeifGetTotalWifiConnectionAttempts()
+{
+	return ulWifiTotalConnAttempts;
+}

@@ -4,7 +4,7 @@
 #include "Arduino.h"
 #include "LeifESPBase.h"
 
-#include "Pinger.h"
+#include "Pinger.h"	//ESP8266-ping
 
 extern "C"
 {
