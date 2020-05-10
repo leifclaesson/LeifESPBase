@@ -8,7 +8,9 @@
 #include "WiFi.h"
 #include "WebServer.h"
 #endif
+#ifndef NO_OTA
 #include <ArduinoOTA.h>
+#endif
 #include "LeifESPBaseMain.h"
 #include "LeifESPBaseWOL.h"
 
@@ -45,6 +47,7 @@ void LeifLoop();
 
 void LeifHtmlMainPageCommonHeader(String & string);
 
+bool Interval50();
 bool Interval100();
 bool Interval250();
 bool Interval500();
@@ -52,6 +55,7 @@ bool Interval1000();
 bool Interval10s();
 
 void LeifSetStatusLedPin(int iPin);	//-1 to disable
+void LeifSetAllowFadeLed(bool bAllowFade);
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
