@@ -26,6 +26,8 @@ static unsigned short usLogTable256[256]=
 extern HardwareSerial Serial;
 
 
+static uint32_t cpu_freq_khz=0;
+
 static int iStatusLedPin=LED_BUILTIN;
 void LeifSetStatusLedPin(int iPin)
 {
@@ -404,6 +406,9 @@ void LeifSetupBegin()
 		}
 #endif
 
+		sprintf(temp,"Clock Freq.......: %.01f MHz\n", cpu_freq_khz / 1000.0f);
+		s+=temp;
+
 #if defined(ARDUINO_ARCH_ESP32)
 
 		uint64_t efusemac=ESP.getEfuseMac();
@@ -624,6 +629,21 @@ void LeifLoop()
 		  ulLastLoopSecond+=1000;
 		  bInterval1000=true;
 		  ulSecondCounter++;
+
+
+		  static uint32_t last_cyclecount=0;
+		  static uint32_t last_cc_millis=0;
+
+		  uint32_t mdiff=millis()-last_cc_millis;
+
+		  if(mdiff)
+		  {
+			  cpu_freq_khz=(ESP.getCycleCount()-last_cyclecount) / mdiff;
+		  }
+
+		  last_cyclecount=ESP.getCycleCount();
+		  last_cc_millis=millis();
+
 	  }
 	  else
 	  {
@@ -690,7 +710,7 @@ void LeifLoop()
 			  //for some reason the ESP32 _always_ fails the first attempt, so let's just skip ahead to the second attempt and save some time.
 			  if(!iWifiConnAttempts)
 			  {
-				  ulWifiReconnect=millis()-14000;
+				  ulWifiReconnect=millis()-12000;
 			  }
 #endif
 
@@ -966,3 +986,4 @@ uint32_t LeifGetTotalWifiConnectionAttempts()
 {
 	return ulWifiTotalConnAttempts;
 }
+
