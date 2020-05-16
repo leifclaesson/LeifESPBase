@@ -765,6 +765,66 @@ void LeifLoop()
 		{
 			if(bAllowLedFade)
 			{
+
+
+
+
+
+				uint16_t use;
+				if(WiFi.isConnected())
+				{
+					static int counter=0;
+					static int add=250;
+					if(counter>65536) add=50;
+					counter+=add;
+					int value=counter & 8191;
+					//int value=(millis() & 8191);
+					if(value>4095) value=8191-value;
+#if defined(ARDUINO_ARCH_ESP32)
+					use=usLogTable256[(value>>5)+(value>>6)+64];
+#else
+					use=(((value>>3)+(value>>4))+256);
+#endif
+				}
+				else
+				{
+					int value=(millis() & 511);
+					if(value>255) value=511-value;
+#if defined(ARDUINO_ARCH_ESP32)
+					use=usLogTable256[value];
+#else
+					use=(value<<1);
+#endif
+				}
+
+#if defined(ARDUINO_ARCH_ESP32)
+				ledcWrite(ucLedFadeChannel,bInvertLedBlink?4095-use:use);
+#else
+				analogWrite(iStatusLedPin,bInvertLedBlink?use:1023-use);
+#endif
+
+				/*
+				uint16_t use;
+				if(WiFi.isConnected())
+				{
+					static int counter=0;
+					static int add=250;
+					if(counter>65536) add=50;
+					counter+=add;
+					int value=counter & 8191;
+					//int value=(millis() & 8191);
+					if(value>4095) value=8191-value;
+					use=(((value>>3)+(value>>4))+256);
+				}
+				else
+				{
+					int value=(millis() & 511);
+					if(value>255) value=511-value;
+					use=(value<<1);
+				}
+
+
+
 #if defined(ARDUINO_ARCH_ESP32)
 				uint16_t use;
 				if(WiFi.isConnected())
@@ -784,7 +844,12 @@ void LeifLoop()
 				uint16_t use;
 				if(WiFi.isConnected())
 				{
-					int value=(millis() & 8191);
+					static int counter=0;
+					static int add=250;
+					if(counter>65536) add=50;
+					counter+=add;
+					int value=counter & 8191;
+					//int value=(millis() & 8191);
 					if(value>4095) value=8191-value;
 					use=(((value>>3)+(value>>4))+256);
 				}
@@ -797,6 +862,7 @@ void LeifLoop()
 
 				analogWrite(iStatusLedPin,bInvertLedBlink?use:1023-use);
 #endif
+*/
 
 			}
 			else
