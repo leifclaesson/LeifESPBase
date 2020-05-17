@@ -331,6 +331,8 @@ void LeifSetupBegin()
 			ledcSetup(ucLedFadeChannel,500,12);
 			ledcAttachPin(iStatusLedPin,ucLedFadeChannel);
 		}
+#else
+		analogWriteRange(1023);
 #endif
 
 		for (int i = 0; i < 25; i++) {
