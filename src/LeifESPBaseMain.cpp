@@ -271,10 +271,16 @@ void LeifSetupConsole()
 
 uint8_t ucLedFadeChannel=15;	//ESP32 ledc
 static bool bAllowLedFade=true;
+#if defined(ARDUINO_ARCH_ESP32)
+int iAnalogWriteBits=10;
+#else
+int iAnalogWriteBits=12;
+#endif
 
-void LeifSetAllowFadeLed(bool bAllowFade)
+void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 {
 	bAllowLedFade=bAllowFade;
+	iAnalogWriteBits=analogWriteBits;
 }
 
 
@@ -766,10 +772,6 @@ void LeifLoop()
 			if(bAllowLedFade)
 			{
 
-
-
-
-
 				uint16_t use;
 				if(WiFi.isConnected())
 				{
@@ -783,7 +785,7 @@ void LeifLoop()
 #if defined(ARDUINO_ARCH_ESP32)
 					use=usLogTable256[(value>>5)+(value>>6)+64];
 #else
-					use=(((value>>3)+(value>>4))+256);
+					use=(((value>>1)+(value>>2))+1024);
 #endif
 				}
 				else
@@ -793,14 +795,18 @@ void LeifLoop()
 #if defined(ARDUINO_ARCH_ESP32)
 					use=usLogTable256[value];
 #else
-					use=(value<<1);
+					use=(value<<3);
 #endif
 				}
 
+				if(iAnalogWriteBits<12) use>>=(12-iAnalogWriteBits);
+					else if(iAnalogWriteBits>12) use<<=(iAnalogWriteBits-12);
+
+
 #if defined(ARDUINO_ARCH_ESP32)
-				ledcWrite(ucLedFadeChannel,bInvertLedBlink?4095-use:use);
+				ledcWrite(ucLedFadeChannel,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
 #else
-				analogWrite(iStatusLedPin,bInvertLedBlink?use:1023-use);
+				analogWrite(iStatusLedPin,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
 #endif
 
 				/*

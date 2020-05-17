@@ -35,7 +35,6 @@ const char * GetHeadingText();
 
 #define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); }
 
-
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
 
@@ -55,7 +54,7 @@ bool Interval1000();
 bool Interval10s();
 
 void LeifSetStatusLedPin(int iPin);	//-1 to disable
-void LeifSetAllowFadeLed(bool bAllowFade);
+void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits);
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
