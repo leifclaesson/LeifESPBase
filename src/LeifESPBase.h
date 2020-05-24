@@ -66,6 +66,8 @@ void LeifUptimeString(String & string);
 
 String LeifGetCompileDate();
 
+String LeifGetWifiStatus();
+
 unsigned long seconds();
 
 int HttpRequest(const char * url, int retries=3);

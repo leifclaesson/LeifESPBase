@@ -91,6 +91,7 @@ uint8_t cBSSID[6]={0,0,0,0,0,0};
 int iWifiChannel=-1;
 bool bAllowBSSID=false;
 
+String strWifiStatus="Disconnected";
 
 
 
@@ -227,6 +228,10 @@ void SetupWifiInternal()
 	{
 	  csprintf("WiFi attempting to connect to %s at BSSID %s, Ch %i (attempt %i)...\n",wifi_ssid,MacToString(cBSSID).c_str(),iWifiChannel,iWifiConnAttempts);
 		WiFi.begin(wifi_ssid, wifi_key,iWifiChannel,cBSSID,true);
+
+		strWifiStatus=wifi_ssid;
+		strWifiStatus+=" ";
+		strWifiStatus+=MacToString(cBSSID);
 	}
 	else
 	{
@@ -245,12 +250,18 @@ void SetupWifiInternal()
 
 		csprintf("WiFi attempting to connect to %s (attempt %i)...\n",use_ssid,iWifiConnAttempts);
 		WiFi.begin(use_ssid, wifi_key);
+
+		strWifiStatus="SSID ";
+		strWifiStatus+=use_ssid;
+
 	}
 #else
 //	csprintf("Using Auto Reconnect\n");
 	WiFi.begin(wifi_ssid, wifi_key);
 	WiFi.setAutoConnect(true);
 	WiFi.setAutoReconnect(true);
+	strWifiStatus="SSID ";
+	strWifiStatus+=use_ssid;
 #endif
 }
 
@@ -696,6 +707,9 @@ void LeifLoop()
 		  if(!bIpPrinted)
 		  {
 			  bIpPrinted=true;
+			  strWifiStatus=MyWiFiSTAClass::GetIsStatic()?"*":"";
+			  strWifiStatus+=WiFi.localIP().toString();
+
 			  csprintf("IP: %s%s, SSID %s, BSSID %s, Ch %i\n",WiFi.localIP().toString().c_str(),MyWiFiSTAClass::GetIsStatic()?" (static)":" (DHCP)",WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(),WiFi.channel());
 			  csprintf("Gateway: %s\n",WiFi.gatewayIP().toString().c_str());
 			  iWifiConnAttempts=0;
@@ -1057,5 +1071,10 @@ String LeifGetCompileDate()
 uint32_t LeifGetTotalWifiConnectionAttempts()
 {
 	return ulWifiTotalConnAttempts;
+}
+
+String LeifGetWifiStatus()
+{
+	return strWifiStatus;
 }
 
