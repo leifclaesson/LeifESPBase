@@ -283,9 +283,9 @@ void LeifSetupConsole()
 uint8_t ucLedFadeChannel=15;	//ESP32 ledc
 static bool bAllowLedFade=true;
 #if defined(ARDUINO_ARCH_ESP32)
-int iAnalogWriteBits=10;
-#else
 int iAnalogWriteBits=12;
+#else
+int iAnalogWriteBits=10;
 #endif
 
 void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
@@ -799,9 +799,9 @@ void LeifLoop()
 					//int value=(millis() & 8191);
 					if(value>4095) value=8191-value;
 #if defined(ARDUINO_ARCH_ESP32)
-					use=usLogTable256[(value>>5)+(value>>6)+64];
+					use=usLogTable256[(value>>7)+(value>>8)+64];
 #else
-					use=(((value>>1)+(value>>2))+1024);
+					use=((value>>3)+256);
 #endif
 				}
 				else
@@ -809,11 +809,13 @@ void LeifLoop()
 					int value=(millis() & 511);
 					if(value>255) value=511-value;
 #if defined(ARDUINO_ARCH_ESP32)
-					use=usLogTable256[value];
+					use=usLogTable256[value>>1];
 #else
-					use=(value<<3);
+					use=(value<<1);
 #endif
 				}
+
+				//if(Interval100()) csprintf("use %i\n",use);
 
 				if(iAnalogWriteBits<12) use>>=(12-iAnalogWriteBits);
 					else if(iAnalogWriteBits>12) use<<=(iAnalogWriteBits-12);
@@ -821,8 +823,11 @@ void LeifLoop()
 
 #if defined(ARDUINO_ARCH_ESP32)
 				ledcWrite(ucLedFadeChannel,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
+				//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
 #else
 				analogWrite(iStatusLedPin,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
+
+				//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
 #endif
 
 				/*
