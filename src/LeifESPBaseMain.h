@@ -19,5 +19,3 @@ enum eHttpMainTable
 class String;
 typedef std::function<void(String &, eHttpMainTable)> LeifHttpMainTableCallback;
 void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb);
-
-String MacToString(const uint8_t * mac);

@@ -91,8 +91,15 @@ uint8_t cBSSID[6]={0,0,0,0,0,0};
 int iWifiChannel=-1;
 bool bAllowBSSID=false;
 
+String g_lastWifiSSID=wifi_ssid;
+String g_lastWifiPSK=wifi_key;
+int g_lastWifiChannel=iWifiChannel;
+uint8_t g_lastBSSID[6]={0,0,0,0,0,0};
+
+
 String strWifiStatus="Disconnected";
 
+bool bAllowConnect=true;
 
 
 
@@ -229,6 +236,11 @@ void SetupWifiInternal()
 	  csprintf("WiFi attempting to connect to %s at BSSID %s, Ch %i (attempt %i)...\n",wifi_ssid,MacToString(cBSSID).c_str(),iWifiChannel,iWifiConnAttempts);
 		WiFi.begin(wifi_ssid, wifi_key,iWifiChannel,cBSSID,true);
 
+		g_lastWifiSSID=wifi_ssid;
+		g_lastWifiPSK=wifi_key;
+		g_lastWifiChannel=iWifiChannel;
+		memcpy(g_lastBSSID,cBSSID,sizeof(g_lastBSSID));
+
 		strWifiStatus=wifi_ssid;
 		strWifiStatus+=" ";
 		strWifiStatus+=MacToString(cBSSID);
@@ -238,6 +250,7 @@ void SetupWifiInternal()
 //		csprintf("No BSSID configured\n");
 
 		const char * use_ssid=wifi_ssid;
+		const char * use_key=wifi_key;
 
 		if(backup_ssid)
 		{
@@ -245,11 +258,17 @@ void SetupWifiInternal()
 			if(x && (x & 1))
 			{
 				use_ssid=backup_ssid;
+				use_key=backup_key;
 			}
 		}
 
 		csprintf("WiFi attempting to connect to %s (attempt %i)...\n",use_ssid,iWifiConnAttempts);
-		WiFi.begin(use_ssid, wifi_key);
+		WiFi.begin(use_ssid, use_key);
+
+		g_lastWifiSSID=use_ssid;
+		g_lastWifiPSK=wifi_key;
+		g_lastWifiChannel=-1;
+		memset(g_lastBSSID,0,sizeof(g_lastBSSID));
 
 		strWifiStatus="SSID ";
 		strWifiStatus+=use_ssid;
@@ -261,7 +280,13 @@ void SetupWifiInternal()
 	WiFi.setAutoConnect(true);
 	WiFi.setAutoReconnect(true);
 	strWifiStatus="SSID ";
-	strWifiStatus+=use_ssid;
+	strWifiStatus+=wifi_ssid;
+
+	g_lastWifiSSID=wifi_ssid;
+	g_lastWifiPSK=wifi_key;
+	g_lastWifiChannel=-1;
+	memset(g_lastBSSID,0,sizeof(g_lastBSSID));
+
 #endif
 }
 
@@ -294,9 +319,17 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 	iAnalogWriteBits=analogWriteBits;
 }
 
-
+bool bLeifSetupBeginDone=false;
 void LeifSetupBegin()
 {
+	while(IsLeifSetupBeginDone())
+	{
+		delay(500);
+		csprintf("LeifSetupBegin() called twice\n");
+	}
+
+	bLeifSetupBeginDone=true;
+
 	LeifSetupConsole();
 
 	if(iStatusLedPin>=0)
@@ -316,6 +349,7 @@ void LeifSetupBegin()
 	ArduinoOTA.setPort(8266);
 #endif
 #endif
+
 
 #ifndef NO_OTA
 	ArduinoOTA.setHostname(GetHostName());
@@ -447,7 +481,9 @@ void LeifSetupBegin()
 
 		sprintf(temp,"Heap free........: %i\n",ESP.getFreeHeap()); s+=temp;
 #if defined(ARDUINO_ARCH_ESP8266)
+#ifndef NO_MAX_FREE_BLOCKSIZE
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxFreeBlockSize()); s+=temp;
+#endif
 #else
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxAllocHeap()); s+=temp;
 #endif
@@ -501,6 +537,25 @@ unsigned long seconds()
 	return ulSecondCounter;
 }
 
+const unsigned long * pSeconds()
+{
+	return &ulSecondCounter;
+}
+
+
+static unsigned long ulSecondCounterWiFi=0;
+
+unsigned long secondsWiFi()
+{
+	return ulSecondCounterWiFi;
+}
+
+const unsigned long * pSecondsWiFi()
+{
+	return &ulSecondCounterWiFi;
+}
+
+
 bool Interval50()
 {
 	return bInterval50;
@@ -529,6 +584,38 @@ bool Interval1000()
 bool Interval10s()
 {
 	return bInterval10s;
+}
+
+void LeifSecondsToShortUptimeString(String & string,unsigned long ulSeconds)
+{
+	char temp[8];
+	if(ulSeconds>=(86400*365))
+	{
+		sprintf(temp,"%luy",ulSeconds/(86400*365));	//years
+	}
+	if(ulSeconds>=(86400*30))
+	{
+		sprintf(temp,"%lum",ulSeconds/(86400*30));	//months
+	}
+	else if(ulSeconds>=86400)
+	{
+		sprintf(temp,"%lud",ulSeconds/86400);	//days
+	}
+	else if(ulSeconds>=3600)
+	{
+		sprintf(temp,"%luh",ulSeconds/3600);	//hours
+	}
+	else if(ulSeconds>=60)
+	{
+		sprintf(temp,"%lum",ulSeconds/60);	//minutes
+	}
+	else
+	{
+		sprintf(temp,"%lus",ulSeconds);	//seconds
+	}
+
+	string=temp;
+
 }
 
 void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds)
@@ -663,6 +750,15 @@ void LeifLoop()
 		  last_cyclecount=ESP.getCycleCount();
 		  last_cc_millis=millis();
 
+		  if(WiFi.status()==WL_CONNECTED)
+		  {
+			  ulSecondCounterWiFi++;
+		  }
+		  else
+		  {
+			  ulSecondCounterWiFi=0;
+		  }
+
 	  }
 	  else
 	  {
@@ -703,51 +799,65 @@ void LeifLoop()
 	  }
 
 
-	  static bool bIpPrinted=false;
-	  if(WiFi.status() == WL_CONNECTED)
+	  if(WiFi.getMode() & WIFI_STA)
 	  {
-		  if(!bIpPrinted)
+
+		  static bool bIpPrinted=false;
+		  if(WiFi.status() == WL_CONNECTED)
 		  {
-			  bIpPrinted=true;
-			  strWifiStatus=MyWiFiSTAClass::GetIsStatic()?"*":"";
-			  strWifiStatus+=WiFi.localIP().toString();
-
-			  csprintf("IP: %s%s, SSID %s, BSSID %s, Ch %i\n",WiFi.localIP().toString().c_str(),MyWiFiSTAClass::GetIsStatic()?" (static)":" (DHCP)",WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(),WiFi.channel());
-			  csprintf("Gateway: %s\n",WiFi.gatewayIP().toString().c_str());
-			  iWifiConnAttempts=0;
-			  bAllowBSSID=true;
-			  bNewWifiConnection=true;
-		  }
-
-	  }
-	  else
-	  {
-		  bIpPrinted=false;
-#if defined(WIFI_RECONNECT)
-		  if((millis()-ulWifiReconnect)>=15000)
-		  {
-			  ulWifiReconnect=millis();
-
-#ifdef ESP32
-			  //for some reason the ESP32 _always_ fails the first attempt, so let's just skip ahead to the second attempt and save some time.
-			  if(!iWifiConnAttempts)
+			  if(!bIpPrinted)
 			  {
-				  ulWifiReconnect=millis()-12000;
-			  }
-#endif
+				  bIpPrinted=true;
+				  strWifiStatus=MyWiFiSTAClass::GetIsStatic()?"*":"";
+				  strWifiStatus+=WiFi.localIP().toString();
 
-			  if(iWifiConnAttempts>=1 && bAllowBSSID)
-			  {
-				  bAllowBSSID=false;
+				  csprintf("IP: %s%s, SSID %s, BSSID %s, Ch %i\n",WiFi.localIP().toString().c_str(),MyWiFiSTAClass::GetIsStatic()?" (static)":" (DHCP)",WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(),WiFi.channel());
+				  csprintf("Gateway: %s\n",WiFi.gatewayIP().toString().c_str());
+				  iWifiConnAttempts=0;
+				  bAllowBSSID=true;
+				  bNewWifiConnection=true;
 			  }
 
-			  SetupWifiInternal();
-
-			  WiFi.reconnect();
-			  iWifiConnAttempts++;
-			  ulWifiTotalConnAttempts++;
 		  }
-#endif
+		  else if(LeifGetAllowWifiConnection())
+		  {
+			  bIpPrinted=false;
+	#if defined(WIFI_RECONNECT)
+			  if((millis()-ulWifiReconnect)>=15000)
+			  {
+				  ulWifiReconnect=millis();
+
+	#ifdef ESP32
+				  //for some reason the ESP32 _always_ fails the first attempt, so let's just skip ahead to the second attempt and save some time.
+				  if(!iWifiConnAttempts)
+				  {
+					  ulWifiReconnect=millis()-12000;
+				  }
+	#endif
+
+				  if(iWifiConnAttempts>=1 && bAllowBSSID)
+				  {
+					  bAllowBSSID=false;
+				  }
+
+				  SetupWifiInternal();
+
+				  WiFi.reconnect();
+				  iWifiConnAttempts++;
+				  ulWifiTotalConnAttempts++;
+				  ulSecondCounterWiFi=0;
+			  }
+	#endif
+		  }
+		  else
+		  {
+			  g_lastWifiSSID="Disabled";
+			  memset(g_lastBSSID,0,6);
+			  g_lastWifiChannel=0;
+			  ulSecondCounterWiFi=0;
+
+
+		  }
 	  }
 
 
@@ -789,7 +899,7 @@ void LeifLoop()
 			{
 
 				uint16_t use;
-				if(WiFi.isConnected())
+				if(WiFi.isConnected() || !bAllowConnect)
 				{
 					static int counter=0;
 					static int add=250;
@@ -798,11 +908,18 @@ void LeifLoop()
 					int value=counter & 8191;
 					//int value=(millis() & 8191);
 					if(value>4095) value=8191-value;
+
 #if defined(ARDUINO_ARCH_ESP32)
 					use=usLogTable256[(value>>7)+(value>>8)+64];
 #else
 					use=((value>>3)+256);
 #endif
+
+					if(!bAllowConnect)
+					{
+						use>>=1;
+					}
+
 				}
 				else
 				{
@@ -982,14 +1099,7 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 	if(iWifiChannel>=0)
 	{
-		if(memcmp(WiFi.BSSID(),cBSSID,6))
-		{
-			bssid_color=-1;
-		}
-		else
-		{
-			bssid_color=1;
-		}
+		bssid_color=LeifIsBSSIDConnection()?1:-1;
 	}
 
 	switch(bssid_color)
@@ -1085,3 +1195,60 @@ String LeifGetWifiStatus()
 	return strWifiStatus;
 }
 
+void LeifSetAllowWifiConnection(bool bAllow)
+{
+	bAllowConnect=bAllow;
+
+	if(bAllow)
+	{
+		ulWifiReconnect=millis()-15000;
+	}
+
+}
+
+bool LeifGetAllowWifiConnection()
+{
+	return bAllowConnect;
+}
+
+bool IsLeifSetupBeginDone()
+{
+	return bLeifSetupBeginDone;
+}
+
+String GetArgument(const String & input, const char * argname)
+{
+	int mac=input.indexOf(argname);
+	if(mac>=0)
+	{
+		mac+=strlen(argname);
+		int space=input.indexOf(' ', mac);
+		if(space>=0)
+		{
+			return input.substring(mac,space);
+		}
+		else
+		{
+			return input.substring(mac);
+		}
+	}
+	return "";
+}
+
+bool LeifIsBSSIDConnection()	//returns true if we're connected an access point configured by BSSID+CH
+{
+	if(WiFi.status()!=WL_CONNECTED) return false;
+	if(iWifiChannel>=0)
+	{
+		if(memcmp(WiFi.BSSID(),cBSSID,6))
+		{
+			return false;
+		}
+		else
+		{
+			return true;
+		}
+	}
+
+	return false;
+}

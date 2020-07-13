@@ -13,9 +13,14 @@
 #endif
 #include "LeifESPBaseMain.h"
 #include "LeifESPBaseWOL.h"
+#include "LeifESPBaseAP.h"
 
 extern const char * wifi_ssid;
 extern const char * wifi_key;
+extern const char * backup_ssid;
+extern const char * backup_key;
+
+#define HAS_CSPRINTF
 
 #ifdef NO_SERIAL_DEBUG
 #define csprintf(...) { if(telnetClients) telnetClients.printf(__VA_ARGS__ ); }
@@ -39,8 +44,11 @@ void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP
 IPAddress LeifGetAccessPointIP();
 
 void LeifSetupConsole();	//can be called before LeifSetupBegin
+
 void LeifSetupBegin();
 void LeifSetupEnd();
+
+bool IsLeifSetupBeginDone();
 
 void LeifLoop();
 
@@ -58,7 +66,13 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits);
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
+void LeifSetAllowWifiConnection(bool bAllow);
+bool LeifGetAllowWifiConnection();
+
 bool IsNewWifiConnection();	//returns true ONCE after a new wifi connection has been established
+
+void LeifSecondsToShortUptimeString(String & string,unsigned long ulSeconds);
+
 
 void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds);
 
@@ -69,12 +83,24 @@ String LeifGetCompileDate();
 String LeifGetWifiStatus();
 
 unsigned long seconds();
+const unsigned long * pSeconds();
+
+unsigned long secondsWiFI();
+const unsigned long * pSecondsWiFi();
 
 int HttpRequest(const char * url, int retries=3);
 int HttpPost(String & url, String & payload, int retries=3);
 byte chartohex(char asciichar);
 
 uint32_t LeifGetTotalWifiConnectionAttempts();
+
+
+String MacToString(const uint8_t * mac);
+
+String GetArgument(const String & input, const char * argname);
+
+
+bool LeifIsBSSIDConnection();	//returns true if we're connected an access point configured by BSSID+CH
 
 
 #ifdef USE_HOMIE
