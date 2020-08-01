@@ -431,6 +431,8 @@ void LeifSetupBegin()
 
 	server.on("/sysinfo", []()
 	{
+		uint32_t heapFree=ESP.getFreeHeap();
+
 		String s;
 
 		char temp[128];
@@ -479,7 +481,7 @@ void LeifSetupBegin()
 		sprintf(temp,"Flash ide speed..: %u Hz\n", ESP.getFlashChipSpeed()); s+=temp;
 		sprintf(temp,"Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN")); s+=temp;
 
-		sprintf(temp,"Heap free........: %i\n",ESP.getFreeHeap()); s+=temp;
+		sprintf(temp,"Heap free........: %i\n",heapFree); s+=temp;
 #if defined(ARDUINO_ARCH_ESP8266)
 #ifndef NO_MAX_FREE_BLOCKSIZE
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxFreeBlockSize()); s+=temp;
@@ -487,7 +489,7 @@ void LeifSetupBegin()
 #else
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxAllocHeap()); s+=temp;
 #endif
-		//sprintf(temp,"Heap frag........: %i\n",ESP.getHeapFragmentation()); s+=temp;
+		sprintf(temp,"Heap frag........: %i\n",ESP.getHeapFragmentation()); s+=temp;
 
 
 		server.send(200, "text/plain", s);
@@ -508,6 +510,8 @@ void LeifSetupBegin()
 
 void LeifSetupEnd()
 {
+	//Serial.println("mDNS responder started");
+
 	server.begin();
 #ifndef NO_OTA
 	ArduinoOTA.begin();
@@ -715,6 +719,8 @@ void LeifLoop()
 	  MDNS.update();
 #endif
 
+
+
 #ifdef USE_HOMIE
 	homie.Loop();
 #endif
@@ -816,6 +822,16 @@ void LeifLoop()
 				  iWifiConnAttempts=0;
 				  bAllowBSSID=true;
 				  bNewWifiConnection=true;
+
+
+					if (!MDNS.begin(GetHostName()))
+					{
+						csprintf("Error setting up MDNS responder for %s!\n",GetHostName());
+					}
+					// Add service to MDNS-SD
+					MDNS.addService("http", "tcp", 80);
+
+
 			  }
 
 		  }
