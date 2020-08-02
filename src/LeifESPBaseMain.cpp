@@ -486,10 +486,10 @@ void LeifSetupBegin()
 #ifndef NO_MAX_FREE_BLOCKSIZE
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxFreeBlockSize()); s+=temp;
 #endif
+		sprintf(temp,"Heap frag........: %i\n",ESP.getHeapFragmentation()); s+=temp;
 #else
 		sprintf(temp,"Heap max alloc...: %i\n",ESP.getMaxAllocHeap()); s+=temp;
 #endif
-		sprintf(temp,"Heap frag........: %i\n",ESP.getHeapFragmentation()); s+=temp;
 
 
 		server.send(200, "text/plain", s);
