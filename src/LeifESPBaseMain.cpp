@@ -26,6 +26,11 @@ static unsigned short usLogTable256[256]=
 extern HardwareSerial Serial;
 
 
+#ifdef USE_SERIAL1_DEBUG
+extern HardwareSerial Serial1;
+#endif
+
+
 static uint32_t cpu_freq_khz=0;
 
 static int iStatusLedPin=LED_BUILTIN;
@@ -42,6 +47,80 @@ ESP8266WebServer server(80);
 #else
 WebServer server(80);
 #endif
+
+void ScrollbackBuffer::alloc(uint16_t bytes)
+{
+	if(!bytes) return;
+
+	bufsize=bytes;
+	buf=(char *) malloc(bytes);
+
+}
+
+size_t ScrollbackBuffer::write(uint8_t value)
+{
+	if(!buf) return 1;
+
+	buf[idx++]=value;
+	idx%=bufsize;
+	kept++;
+	if(kept>bufsize) kept=bufsize;
+
+	return 1;
+}
+
+size_t ScrollbackBuffer::write(const uint8_t *buffer, size_t writesize)
+{
+	if(!buf) return writesize;
+
+
+	size_t remaining=writesize;
+
+	//Serial.printf("WRITE %u\n",remaining);
+
+	while(remaining)
+	{
+		uint16_t bytes_now=remaining;
+		if(bytes_now>(size_t) (bufsize-idx)) bytes_now=bufsize-idx;
+		//csprintf("copy %i bytes to buffer at idx %i",bytes_now,idx);
+		memcpy(&buf[idx],buffer,bytes_now);
+		remaining-=bytes_now;
+		buffer+=bytes_now;
+		idx+=bytes_now;
+		//Serial.printf("idx %u\n",idx);
+		idx%=bufsize;
+		kept+=bufsize;
+		if(kept>bufsize) kept=bufsize;
+	}
+
+	return writesize;
+}
+
+const char * ScrollbackBuffer::dataFirst()
+{
+	return &buf[idx];
+
+}
+
+size_t ScrollbackBuffer::sizeFirst()
+{
+	if(kept<bufsize) return 0;
+	return bufsize-idx;
+}
+
+const char * ScrollbackBuffer::dataSecond()
+{
+	return &buf[0];
+}
+size_t ScrollbackBuffer::sizeSecond()
+{
+	return idx;
+}
+
+
+
+ScrollbackBuffer scrollbackBuffer;
+
 
 
 WiFiServer telnet(23);
@@ -74,7 +153,6 @@ void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb)
 {
 	fnHttpMainTableCallback=cb;
 }
-
 
 
 
@@ -290,14 +368,20 @@ void SetupWifiInternal()
 #endif
 }
 
+
+
+
+
 bool bConsoleInitDone=false;
-void LeifSetupConsole()
+void LeifSetupConsole(uint16_t _scrollback_bytes)
 {
 	if(bConsoleInitDone) return;
 
 #ifndef NO_SERIAL_DEBUG
 	Serial.begin(115200);
 #endif
+
+	scrollbackBuffer.alloc(_scrollback_bytes);
 
 	bConsoleInitDone=true;
 
@@ -884,14 +968,26 @@ void LeifLoop()
 				if(telnetClients)
 				{
 					telnetClients.stop();
-					csprintf("Telnet Client Stop\n");
+					//csprintf("Telnet Client Stop\n");
 				}
 				telnetClients = telnet.available();
 
 				String strUptime;
 				LeifUptimeString(strUptime);
 
-				csprintf("Welcome to %s! Uptime: %s\n",GetHostName(),strUptime.c_str());
+				telnetClients.printf("Welcome to %s, ip %s! Uptime: %s\n",GetHostName(),WiFi.localIP().toString().c_str(),strUptime.c_str());
+
+#ifndef NO_SERIAL_DEBUG
+				Serial.printf("New telnet connection from %s, uptime %s\n",telnetClients.remoteIP().toString().c_str(),strUptime.c_str());
+#endif
+
+#ifdef USE_SERIAL1_DEBUG
+				Serial1.printf("New telnet connection from %s, uptime %s\n",telnetClients.remoteIP().toString().c_str(),strUptime.c_str());
+#endif
+
+				telnetClients.write(scrollbackBuffer.dataFirst(),scrollbackBuffer.sizeFirst());
+				telnetClients.write(scrollbackBuffer.dataSecond(),scrollbackBuffer.sizeSecond());
+
 				telnetClients.flush();  // clear input buffer, else you get strange characters
 				disconnectedClient = 0;
 			}
@@ -1268,3 +1364,5 @@ bool LeifIsBSSIDConnection()	//returns true if we're connected an access point c
 
 	return false;
 }
+
+

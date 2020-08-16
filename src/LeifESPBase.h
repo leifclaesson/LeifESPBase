@@ -22,10 +22,44 @@ extern const char * backup_key;
 
 #define HAS_CSPRINTF
 
+class ScrollbackBuffer : public Print
+{
+public:
+
+	void alloc(uint16_t bytes);
+
+    size_t write(uint8_t value) override;
+    size_t write(const uint8_t *buffer, size_t size) override;
+
+    const char * dataFirst();
+    size_t sizeFirst();
+    const char * dataSecond();
+    size_t sizeSecond();
+
+private:
+
+	char * buf=NULL;
+
+	uint16_t bufsize=0;
+	uint16_t kept=0;
+	uint16_t idx=0;
+
+
+};
+
+
+
+
+
+
 #ifdef NO_SERIAL_DEBUG
-#define csprintf(...) { if(telnetClients) telnetClients.printf(__VA_ARGS__ ); }
+#ifdef USE_SERIAL1_DEBUG
+#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #else
-#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClients) telnetClients.printf(__VA_ARGS__ ); }
+#define csprintf(...) { if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#endif
+#else
+#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -35,6 +69,8 @@ extern WebServer server;
 #endif
 extern WiFiClient telnetClients;
 
+extern ScrollbackBuffer scrollbackBuffer;
+
 const char * GetHostName();
 const char * GetHeadingText();
 
@@ -43,7 +79,7 @@ const char * GetHeadingText();
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
 
-void LeifSetupConsole();	//can be called before LeifSetupBegin
+void LeifSetupConsole(uint16_t _scrollback_bytes=0);	//can be called before LeifSetupBegin
 
 void LeifSetupBegin();
 void LeifSetupEnd();
