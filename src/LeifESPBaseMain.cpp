@@ -482,6 +482,8 @@ void LeifSetupBegin()
 	ArduinoOTA.onEnd([]()   // do a fancy thing with our board led at end
 	{
 
+		DoOnShutdownCallback("OTA_DONE");
+
 #if defined(ARDUINO_ARCH_ESP32)
 		if(iStatusLedPin>=0)
 		{
@@ -526,6 +528,7 @@ void LeifSetupBegin()
 	ArduinoOTA.onError([](ota_error_t error)
 	{
 		(void)error;
+		DoOnShutdownCallback("OTA_FAILED");
 		ESP.restart();
 	});
 #endif
@@ -805,6 +808,18 @@ bool LeifGetInvertLedBlink()
 
 void LeifLoop()
 {
+
+	static bool bFirst=true;
+	if(bFirst)
+	{
+		bFirst=false;
+
+		ulLastLoopMillis=millis();
+		ulLastLoopSecond=millis();
+		ulLastLoopHalfSecond=millis();
+		ulLastLoopQuarterSecond=millis();
+		ulLastLoopDeciSecond=millis();
+	}
 
 	if(((int32_t) (millis()-ulLastLoopMillis))<50)
 	{
