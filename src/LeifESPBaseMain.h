@@ -9,10 +9,6 @@ void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb);
 enum eHttpMainTable
 {
 	eHttpMainTable_BeforeFirstRow,
-	eHttpMainTable_InsideFirstRow,
-	eHttpMainTable_InsideFirstRowEnd,
-	eHttpMainTable_InsideLastRow,
-	eHttpMainTable_InsideLastRowEnd,
 	eHttpMainTable_AfterLastRow
 };
 
