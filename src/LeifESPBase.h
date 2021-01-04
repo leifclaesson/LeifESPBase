@@ -102,6 +102,8 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits);
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
+void LeifSetSuppressLedWrite(bool bSuppress);
+
 void LeifSetAllowWifiConnection(bool bAllow);
 bool LeifGetAllowWifiConnection();
 

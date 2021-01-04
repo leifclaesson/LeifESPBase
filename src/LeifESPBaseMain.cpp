@@ -90,6 +90,7 @@ void ScrollbackBuffer::alloc(uint16_t bytes)
 
 	bufsize = bytes;
 	buf = (char *) malloc(bytes);
+	memset(buf,0,bytes);
 
 }
 
@@ -176,10 +177,14 @@ size_t ScrollbackBuffer::sizeSecond()
 ScrollbackBuffer scrollbackBuffer;
 
 
+void HandleCommandLine();
 
 WiFiServer telnet(23);
 WiFiClient telnetClients;
 int disconnectedClient = 1;
+
+String strTelnetCmdBuffer;
+String strSerialCmdBuffer;
 
 #define WIFI_RECONNECT
 
@@ -191,13 +196,28 @@ uint32_t ulWifiTotalConnAttempts = 0;
 #endif
 
 
+static std::vector<LeifCommandCallback> vecOnCommand;
+
+void LeifRegisterCommandCallback(LeifCommandCallback cb)
+{
+	vecOnCommand.push_back(cb);
+}
+
+void DoCommandCallback(const String & strCommand, eCommandLineSource source)
+{
+	for(size_t i=0;i<vecOnCommand.size();i++)
+	{
+		vecOnCommand[i](strCommand,source);
+	}
+}
+
+
 
 static std::vector<LeifOnShutdownCallback> vecOnShutdown;
 
 void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb)
 {
 	vecOnShutdown.push_back(cb);
-
 }
 
 
@@ -510,7 +530,8 @@ void LeifSetupBegin()
 		{
 			pinMode(iStatusLedPin, OUTPUT);
 #if defined(ARDUINO_ARCH_ESP32)
-			digitalWrite(iStatusLedPin, LOW);
+			ledcDetachPin(iStatusLedPin);
+			digitalWrite(iStatusLedPin, HIGH);
 #else
 			digitalWrite(iStatusLedPin, HIGH);
 #endif
@@ -573,6 +594,10 @@ void LeifSetupBegin()
 	{
 		(void)error;
 		DoOnShutdownCallback("OTA_FAILED");
+#if defined(ARDUINO_ARCH_ESP32)
+		csprintf("OTA FAILED (%i)\n",error);
+		delay(1000);
+#endif
 		ESP.restart();
 	});
 #endif
@@ -908,6 +933,8 @@ void LeifLoop()
 #endif
 
 
+	HandleCommandLine();
+
 
 	if(bInterval1000 && ulSecondCounter % 10 == 0)
 	{
@@ -1100,6 +1127,9 @@ void LeifLoop()
 			telnetClients.flush();  // clear input buffer, else you get strange characters
 			disconnectedClient = 0;
 		}
+
+
+
 	}
 	else
 	{
@@ -1513,3 +1543,67 @@ bool LeifIsBSSIDConnection()	//returns true if we're connected an access point c
 }
 
 
+void HandleCommandLine()
+{
+
+	uint16_t uCmdMax=16;
+
+	while(telnetClients.available())
+	{
+		char inputChar=telnetClients.read();
+
+		if(inputChar=='\r' || inputChar=='\n')
+		{
+			if(strTelnetCmdBuffer.length())
+			{
+				DoCommandCallback(strTelnetCmdBuffer,eCommandLineSource_Telnet);
+			}
+
+			strTelnetCmdBuffer="";
+		}
+		else
+		{
+			if(vecOnCommand.size())
+			{
+				strTelnetCmdBuffer+=inputChar;
+			}
+		}
+	}
+
+	if(strTelnetCmdBuffer.length()>uCmdMax)
+	{
+		strTelnetCmdBuffer.remove(0, strTelnetCmdBuffer.length()-uCmdMax);
+	}
+
+
+
+#ifndef NO_SERIAL_DEBUG
+	if(Serial.available())
+	{
+		char inputChar=Serial.read();
+
+		if(inputChar=='\r' || inputChar=='\n')
+		{
+			if(strSerialCmdBuffer.length())
+			{
+				DoCommandCallback(strSerialCmdBuffer,eCommandLineSource_Serial);
+			}
+
+			strSerialCmdBuffer="";
+		}
+		else
+		{
+			if(vecOnCommand.size())
+			{
+				strSerialCmdBuffer+=inputChar;
+			}
+		}
+	}
+
+	if(strSerialCmdBuffer.length()>uCmdMax)
+	{
+		strSerialCmdBuffer.remove(0, strSerialCmdBuffer.length()-uCmdMax);
+	}
+#endif
+
+}
