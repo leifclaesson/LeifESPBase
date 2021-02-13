@@ -3,7 +3,9 @@
 
 #if defined(ARDUINO_ARCH_ESP8266)
 #include <ESP8266WiFi.h>
+#ifndef NO_GLOBAL_MDNS
 #include <ESP8266mDNS.h>
+#endif
 #include <ESP8266WebServer.h>
 #else
 #include "WiFi.h"
@@ -17,8 +19,12 @@ bool bUpdatingOTA = false;
 
 #include "..\environment_setup.h"
 
+
 uint32_t serial_debug_rate=115200;
 
+static unsigned long ulSecondCounterWiFiWatchdog = 0;
+
+#ifndef NO_GLOBAL_MDNS
 uint32_t ulLastMDNS = 0;
 bool bMDNSOpen = false;
 
@@ -43,6 +49,7 @@ void BeginMDNS()
 
 	ulLastMDNS = millis();
 }
+#endif
 
 #if defined(ARDUINO_ARCH_ESP32)
 
@@ -60,6 +67,8 @@ extern HardwareSerial Serial;
 extern HardwareSerial Serial1;
 #endif
 
+
+void WiFiWatchdog();
 
 static uint32_t cpu_freq_khz = 0;
 
@@ -385,6 +394,7 @@ void SetupWifiInternal()
 #else
 	WiFi.setHostname(GetHostName());
 #endif
+	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)
 	WiFi.setAutoConnect(false);
 	WiFi.setAutoReconnect(false);
@@ -526,6 +536,7 @@ void LeifSetupBegin()
 	ArduinoOTA.setHostname(GetHostName());
 	ArduinoOTA.onStart([]()   // switch off all the PWMs during upgrade
 	{
+		csprintf("OTA update starting\n");
 		if(iStatusLedPin >= 0)
 		{
 			pinMode(iStatusLedPin, OUTPUT);
@@ -546,6 +557,7 @@ void LeifSetupBegin()
 	ArduinoOTA.onEnd([]()   // do a fancy thing with our board led at end
 	{
 
+		csprintf("OTA update done\n");
 		DoOnShutdownCallback("OTA_DONE");
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -585,6 +597,7 @@ void LeifSetupBegin()
 #endif
 		}
 
+		csprintf("OTA update triggering restart\n");
 		delay(500);
 		ESP.restart();
 		delay(500);
@@ -594,10 +607,8 @@ void LeifSetupBegin()
 	{
 		(void)error;
 		DoOnShutdownCallback("OTA_FAILED");
-#if defined(ARDUINO_ARCH_ESP32)
-		csprintf("OTA FAILED (%i)\n",error);
-		delay(1000);
-#endif
+		csprintf("OTA update FAILED (%i)\n",error);
+		delay(500);
 		ESP.restart();
 	});
 #endif
@@ -743,6 +754,7 @@ const unsigned long * pSeconds()
 
 static unsigned long ulSecondCounterWiFi = 0;
 
+
 unsigned long secondsWiFi()
 {
 	return ulSecondCounterWiFi;
@@ -885,6 +897,7 @@ bool LeifGetInvertLedBlink()
 	return bInvertLedBlink;
 }
 
+
 void LeifLoop()
 {
 
@@ -923,7 +936,9 @@ void LeifLoop()
 #endif
 	server.handleClient();
 #if defined(ARDUINO_ARCH_ESP8266)
+#ifndef NO_GLOBAL_MDNS
 	MDNS.update();
+#endif
 #endif
 
 
@@ -935,15 +950,6 @@ void LeifLoop()
 
 	HandleCommandLine();
 
-
-	if(bInterval1000 && ulSecondCounter % 10 == 0)
-	{
-		bInterval10s = true;
-	}
-	else
-	{
-		bInterval10s = false;
-	}
 
 	if((int)(ulLastLoopMillis - ulLastLoopSecond) >= 1000)
 	{
@@ -968,17 +974,31 @@ void LeifLoop()
 		if(WiFi.status() == WL_CONNECTED)
 		{
 			ulSecondCounterWiFi++;
+			ulSecondCounterWiFiWatchdog=0;
 		}
 		else
 		{
 			ulSecondCounterWiFi = 0;
+			ulSecondCounterWiFiWatchdog++;
 		}
+
+		WiFiWatchdog();
 
 	}
 	else
 	{
 		bInterval1000 = false;
 	}
+
+	if(bInterval1000 && ulSecondCounter % 10 == 0)
+	{
+		bInterval10s = true;
+	}
+	else
+	{
+		bInterval10s = false;
+	}
+
 
 	if((int)(ulLastLoopMillis - ulLastLoopHalfSecond) >= 500)
 	{
@@ -1032,15 +1052,19 @@ void LeifLoop()
 				bAllowBSSID = true;
 				bNewWifiConnection = true;
 
+#ifndef NO_GLOBAL_MDNS
 				BeginMDNS();
+#endif
 
 			}
 
+#ifndef NO_GLOBAL_MDNS
 #if defined(ARDUINO_ARCH_ESP32)
 			if(millis() - ulLastMDNS > 90000)
 			{
 				BeginMDNS();
 			}
+#endif
 #endif
 
 		}
@@ -1048,7 +1072,12 @@ void LeifLoop()
 		{
 			bIpPrinted = false;
 #if defined(WIFI_RECONNECT)
-			if((millis() - ulWifiReconnect) >= 15000)
+			uint32_t ulReconnectMs=15000;
+			if(iWifiConnAttempts>5) ulReconnectMs=30000;	//rec onnect more slowly
+			if(iWifiConnAttempts>10) ulReconnectMs=60000;	//reconnect more slowly
+			if(iWifiConnAttempts>15) ulReconnectMs=120000;	//reconnect more slowly
+
+			if((millis() - ulWifiReconnect) >= ulReconnectMs)
 			{
 				ulWifiReconnect = millis();
 
@@ -1605,5 +1634,25 @@ void HandleCommandLine()
 		strSerialCmdBuffer.remove(0, strSerialCmdBuffer.length()-uCmdMax);
 	}
 #endif
+
+}
+
+void WiFiWatchdog()
+{
+
+	if(!LeifGetAllowWifiConnection())
+	{
+		ulSecondCounterWiFiWatchdog=0;
+		return;
+	}
+
+	if(ulSecondCounterWiFiWatchdog>150)
+	{
+		csprintf("WiFi watchdog: WiFi has been stuck for a while, force disconnect and retry\n");
+		WiFi.disconnect();
+		ulSecondCounterWiFiWatchdog=0;
+	}
+
+//	csprintf("WD %u ",ulSecondCounterWiFiWatchdog);
 
 }
