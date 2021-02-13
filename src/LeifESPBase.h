@@ -122,11 +122,11 @@ String LeifGetCompileDate();
 
 String LeifGetWifiStatus();
 
-unsigned long seconds();
-const unsigned long * pSeconds();
+uint32_t seconds();
+const uint32_t * pSeconds();
 
-unsigned long secondsWiFI();
-const unsigned long * pSecondsWiFi();
+uint32_t secondsWiFI();
+const uint32_t * pSecondsWiFi();
 
 int HttpRequest(const char * url, int retries=3);
 int HttpPost(String & url, String & payload, int retries=3);

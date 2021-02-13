@@ -237,6 +237,10 @@ void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb)
 	fnHttpMainTableCallback = cb;
 }
 
+LeifHttpMainTableCallback fnHttpMainTableExtraCallback;	//used by LeifESPBaseHomie and LeifESPBaseMQTT
+
+
+
 
 
 void DoOnShutdownCallback(const char * pszReason)
@@ -261,6 +265,8 @@ uint8_t g_lastBSSID[6] = {0, 0, 0, 0, 0, 0};
 String strWifiStatus = "Disconnected";
 
 bool bAllowConnect = true;
+
+const uint32_t * pMqttUptime=NULL;
 
 
 
@@ -739,28 +745,28 @@ static bool bInterval500 = false;
 static bool bInterval1000 = false;
 static bool bInterval10s = false;
 
-static unsigned long ulSecondCounter = 0;
+static uint32_t ulSecondCounter = 0;
 
-unsigned long seconds()
+uint32_t seconds()
 {
 	return ulSecondCounter;
 }
 
-const unsigned long * pSeconds()
+const uint32_t * pSeconds()
 {
 	return &ulSecondCounter;
 }
 
 
-static unsigned long ulSecondCounterWiFi = 0;
+static uint32_t ulSecondCounterWiFi = 0;
 
 
-unsigned long secondsWiFi()
+uint32_t secondsWiFi()
 {
 	return ulSecondCounterWiFi;
 }
 
-const unsigned long * pSecondsWiFi()
+const uint32_t * pSecondsWiFi()
 {
 	return &ulSecondCounterWiFi;
 }
@@ -1346,6 +1352,10 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		fnHttpMainTableCallback(string, eHttpMainTable_BeforeFirstRow);
 	}
 
+	if(fnHttpMainTableExtraCallback)
+	{
+		fnHttpMainTableExtraCallback(string,eHttpMainTable_BeforeFirstRow);
+	}
 
 
 	string.concat("<tr>");
@@ -1379,6 +1389,45 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat("</td>");
 
 	string.concat("</tr>");
+
+	uint32_t heapFree = ESP.getFreeHeap();
+	String temp;
+
+
+	string.concat("<tr>");
+	string.concat("<td colspan=\"3\">");
+	string.concat("WiFi: ");
+	LeifSecondsToUptimeString(temp,ulSecondCounterWiFi);
+	string.concat(temp);
+
+	if(pMqttUptime)
+	{
+		string.concat(", MQTT: ");
+		LeifSecondsToUptimeString(temp,*pMqttUptime);
+		string.concat(temp);
+	}
+	string.concat("</td>");
+	string.concat("<td colspan=\"3\">");
+	string.concat("Heap: ");
+
+	string.concat(heapFree);
+
+#if defined(ARDUINO_ARCH_ESP8266)
+#ifndef NO_MAX_FREE_BLOCKSIZE
+	string.concat(" (");
+	string.concat(ESP.getMaxFreeBlockSize());
+	string.concat(")");
+#endif
+#else
+	string.concat(" (");
+	string.concat(ESP.getMaxAllocHeap());
+	string.concat(")");
+#endif
+
+	string.concat("</td>");
+	string.concat("</tr>");
+
+
 
 
 	string.concat("<td colspan=\"3\">");
@@ -1450,13 +1499,18 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat(WiFi.RSSI());
 	string.concat("</td>");
 	string.concat("</tr>");
+
+	if(fnHttpMainTableExtraCallback)
+	{
+		fnHttpMainTableExtraCallback(string,eHttpMainTable_AfterLastRow);
+	}
+
 	if(fnHttpMainTableCallback)
 	{
 		fnHttpMainTableCallback(string, eHttpMainTable_AfterLastRow);
 	}
 
 	string.concat("</table>");
-
 
 
 	string.concat("<br>");

@@ -19,7 +19,7 @@ void LeifRegisterCommandCallback(LeifCommandCallback cb);
 enum eHttpMainTable
 {
 	eHttpMainTable_BeforeFirstRow,
-	eHttpMainTable_AfterLastRow
+	eHttpMainTable_AfterLastRow,
 };
 
 class String;
