@@ -32,8 +32,9 @@ void BeginMDNS()
 {
 	if(bMDNSOpen)
 	{
-		MDNS.end();
-		bMDNSOpen = false;
+		return;
+		//MDNS.end();
+		//bMDNSOpen = false;
 	}
 
 	if(!MDNS.begin(GetHostName()))
@@ -267,8 +268,9 @@ String strWifiStatus = "Disconnected";
 bool bAllowConnect = true;
 
 const uint32_t * pMqttUptime=NULL;
+const char * pMqttLibrary=NULL;
 
-
+String strProjectName;
 
 bool ParseMacAddress(const char * pszMAC, uint8_t * cMacOut)
 {
@@ -702,6 +704,22 @@ void LeifSetupBegin()
 		s += temp;
 #endif
 
+		s += "\n";
+
+		if(strProjectName.length())
+		{
+			sprintf(temp, "Project..........: %s\n", strProjectName.c_str());
+			s += temp;
+		}
+
+		if(pMqttLibrary)
+		{
+			sprintf(temp, "MQTT.............: %s\n", pMqttLibrary);
+			s += temp;
+		}
+
+
+
 
 		server.send(200, "text/plain", s);
 	});
@@ -1063,15 +1081,6 @@ void LeifLoop()
 #endif
 
 			}
-
-#ifndef NO_GLOBAL_MDNS
-#if defined(ARDUINO_ARCH_ESP32)
-			if(millis() - ulLastMDNS > 90000)
-			{
-				BeginMDNS();
-			}
-#endif
-#endif
 
 		}
 		else if(LeifGetAllowWifiConnection())

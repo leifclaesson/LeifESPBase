@@ -13,9 +13,20 @@
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
 #endif
+
+#ifdef NO_GLOBAL_SERIAL
+#ifndef NO_SERIAL_DEBUG
+#define NO_SERIAL_DEBUG
+#endif
+#endif
+
+
 #include "LeifESPBaseMain.h"
 #include "LeifESPBaseWOL.h"
 #include "LeifESPBaseAP.h"
+
+
+
 
 extern const char * wifi_ssid;
 extern const char * wifi_key;
@@ -76,7 +87,7 @@ extern ScrollbackBuffer scrollbackBuffer;
 const char * GetHostName();
 const char * GetHeadingText();
 
-#define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); }
+#define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); extern String strProjectName; strProjectName=__FILE__; }
 
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
@@ -143,12 +154,3 @@ String GetArgument(const String & input, const char * argname);
 bool LeifIsBSSIDConnection();	//returns true if we're connected an access point configured by BSSID+CH
 
 
-#ifdef USE_HOMIE
-
-#include <LeifHomieLib.h>
-
-extern HomieDevice homie;
-
-void LeifPublishMQTT(const char* topic, const char* payload, bool retain);
-
-#endif
