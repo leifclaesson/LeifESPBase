@@ -147,6 +147,7 @@ uint32_t LeifGetTotalWifiConnectionAttempts();
 
 
 String MacToString(const uint8_t * mac);
+bool ParseMacAddress(const char * pszMAC, uint8_t * cMacOut);
 
 String GetArgument(const String & input, const char * argname);
 

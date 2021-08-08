@@ -10,7 +10,9 @@
 #else
 #include "WiFi.h"
 #include "WebServer.h"
-#include "ESPmDNS.h"
+	#ifndef NO_GLOBAL_MDNS
+		#include "ESPmDNS.h"
+	#endif
 #endif
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
@@ -69,11 +71,68 @@ extern HardwareSerial Serial1;
 #endif
 
 
+
+
+static void onWiFiEvent(WiFiEvent_t event)
+{
+
+	/*
+	const char * pszReason="Unknown";
+
+	switch(event)
+	{
+	default: break;
+	case WIFI_EVENT_STAMODE_CONNECTED           : pszReason="STAMODE_CONNECTED"; break;
+	case WIFI_EVENT_STAMODE_DISCONNECTED        :
+		pszReason="STAMODE_DISCONNECTED";
+		break;
+	case WIFI_EVENT_STAMODE_AUTHMODE_CHANGE     : pszReason="STAMODE_AUTHMODE_CHANGE"; break;
+	case WIFI_EVENT_STAMODE_GOT_IP              : pszReason="STAMODE_GOT_IP"; break;
+	case WIFI_EVENT_STAMODE_DHCP_TIMEOUT        : pszReason="STAMODE_DHCP_TIMEOUT"; break;
+	case WIFI_EVENT_SOFTAPMODE_STACONNECTED     : pszReason="SOFTAPMODE_STACONNECTED"; break;
+	case WIFI_EVENT_SOFTAPMODE_STADISCONNECTED  : pszReason="SOFTAPMODE_STADISCONNECTED"; break;
+	case WIFI_EVENT_SOFTAPMODE_PROBEREQRECVED   : pszReason="SOFTAPMODE_PROBEREQRECVED"; break;
+	case WIFI_EVENT_MODE_CHANGE                 : pszReason="MODE_CHANGE"; break;
+#if defined(ARDUINO_ARCH_ESP8266)
+	case WIFI_EVENT_SOFTAPMODE_DISTRIBUTE_STA_IP: pszReason="SOFTAPMODE_DISTRIBUTE_STA_IP"; break;
+#endif
+	case WIFI_EVENT_MAX                         : pszReason="ANY"; break;
+	}
+
+	csprintf("WiFi event %i (%s)\n",event,pszReason);
+*/
+#if defined(ARDUINO_ARCH_ESP8266)
+	if(event==WIFI_EVENT_STAMODE_DISCONNECTED)
+	{
+		//Bug fixed as of 2021-08-08
+		csprintf("WIFI_EVENT_STAMODE_DISCONNECTED\n");
+		WiFi.disconnect(false);	//WHY is this not done internally? isConnected() still returns true if we don't manually disconnect, while RSSI() returns 31
+	}
+#endif
+
+    //sEventsReceived[event]++;
+}
+
+
+bool IsWiFiConnected()
+{
+/*#if defined(ARDUINO_ARCH_ESP8266)
+	if(WiFi.RSSI()>0) return false;
+#endif
+*/
+	return WiFi.isConnected();
+}
+
 void WiFiWatchdog();
 
 static uint32_t cpu_freq_khz = 0;
 
-static int iStatusLedPin = LED_BUILTIN;
+static int iStatusLedPin =
+#ifdef LED_BUILTIN
+LED_BUILTIN ;
+#else
+-1 ;
+#endif
 void LeifSetStatusLedPin(int iPin)
 {
 	iStatusLedPin = iPin;
@@ -407,8 +466,6 @@ void SetupWifiInternal()
 	WiFi.setAutoConnect(false);
 	WiFi.setAutoReconnect(false);
 
-	//WiFi.onStationModeDisconnected(onStationModeDisconnectedEvent);
-
 
 	if(iWifiChannel >= 0 && bAllowBSSID)
 	{
@@ -525,6 +582,9 @@ void LeifSetupBegin()
 		pinMode(iStatusLedPin, OUTPUT);
 		digitalWrite(iStatusLedPin, LOW);
 	}
+
+
+	WiFi.onEvent(onWiFiEvent, WIFI_EVENT_ANY);
 
 	WiFi.mode(WIFI_STA);
 
@@ -681,10 +741,14 @@ void LeifSetupBegin()
 		s += temp;
 		sprintf(temp, "Flash real size..: %u bytes\n\n", ESP.getFlashChipRealSize());
 		s += temp;
-#endif
 
 		sprintf(temp, "Flash ide size...: %u bytes\n", ideSize);
 		s += temp;
+#endif
+#if defined(ARDUINO_ARCH_ESP32)
+		sprintf(temp, "Flash size.......: %u bytes\n", ideSize);
+		s += temp;
+#endif
 		sprintf(temp, "Flash ide speed..: %u Hz\n", ESP.getFlashChipSpeed());
 		s += temp;
 		sprintf(temp, "Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
@@ -1194,7 +1258,7 @@ void LeifLoop()
 		{
 
 			uint16_t use;
-			if(WiFi.isConnected() || !bAllowConnect)
+			if(IsWiFiConnected() || !bAllowConnect)
 			{
 				static int counter = 0;
 				static int add = 250;
@@ -1257,72 +1321,11 @@ void LeifLoop()
 			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
 #endif
 
-			/*
-			uint16_t use;
-			if(WiFi.isConnected())
-			{
-				static int counter=0;
-				static int add=250;
-				if(counter>65536) add=50;
-				counter+=add;
-				int value=counter & 8191;
-				//int value=(millis() & 8191);
-				if(value>4095) value=8191-value;
-				use=(((value>>3)+(value>>4))+256);
-			}
-			else
-			{
-				int value=(millis() & 511);
-				if(value>255) value=511-value;
-				use=(value<<1);
-			}
-
-
-
-			#if defined(ARDUINO_ARCH_ESP32)
-			uint16_t use;
-			if(WiFi.isConnected())
-			{
-				int value=(millis() & 8191);
-				if(value>4095) value=8191-value;
-				use=usLogTable256[(value>>5)+(value>>6)+64];
-			}
-			else
-			{
-				int value=(millis() & 511);
-				if(value>255) value=511-value;
-				use=usLogTable256[value];
-			}
-			ledcWrite(ucLedFadeChannel,bInvertLedBlink?4095-use:use);
-			#else
-			uint16_t use;
-			if(WiFi.isConnected())
-			{
-				static int counter=0;
-				static int add=250;
-				if(counter>65536) add=50;
-				counter+=add;
-				int value=counter & 8191;
-				//int value=(millis() & 8191);
-				if(value>4095) value=8191-value;
-				use=(((value>>3)+(value>>4))+256);
-			}
-			else
-			{
-				int value=(millis() & 511);
-				if(value>255) value=511-value;
-				use=(value<<1);
-			}
-
-			analogWrite(iStatusLedPin,bInvertLedBlink?use:1023-use);
-			#endif
-			*/
-
 		}
 		else
 		{
 			int interval = 2000;
-			if(!WiFi.isConnected())
+			if(!IsWiFiConnected())
 			{
 				interval = 500;
 			}
