@@ -72,6 +72,7 @@ extern HardwareSerial Serial1;
 
 
 
+#if defined(ARDUINO_ARCH_ESP8266)
 
 static void onWiFiEvent(WiFiEvent_t event)
 {
@@ -101,17 +102,16 @@ static void onWiFiEvent(WiFiEvent_t event)
 
 	csprintf("WiFi event %i (%s)\n",event,pszReason);
 */
-#if defined(ARDUINO_ARCH_ESP8266)
 	if(event==WIFI_EVENT_STAMODE_DISCONNECTED)
 	{
 		//Bug fixed as of 2021-08-08
 		csprintf("WIFI_EVENT_STAMODE_DISCONNECTED\n");
 		WiFi.disconnect(false);	//WHY is this not done internally? isConnected() still returns true if we don't manually disconnect, while RSSI() returns 31
 	}
-#endif
 
     //sEventsReceived[event]++;
 }
+#endif
 
 
 bool IsWiFiConnected()
@@ -584,7 +584,9 @@ void LeifSetupBegin()
 	}
 
 
+#if defined(ARDUINO_ARCH_ESP8266)
 	WiFi.onEvent(onWiFiEvent, WIFI_EVENT_ANY);
+#endif
 
 	WiFi.mode(WIFI_STA);
 
