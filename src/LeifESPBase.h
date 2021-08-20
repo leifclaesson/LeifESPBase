@@ -67,12 +67,12 @@ private:
 
 #ifdef NO_SERIAL_DEBUG
 #ifdef USE_SERIAL1_DEBUG
-#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #else
-#define csprintf(...) { if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 #else
-#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClients) telnetClients.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -130,6 +130,9 @@ void LeifSecondsToUptimeString(String & string,unsigned long ulSeconds);
 void LeifUptimeString(String & string);
 
 String LeifGetCompileDate();
+String LeifGetVersionText();
+
+void LeifSetVersionText(const char * szVersion);
 
 String LeifGetWifiStatus();
 

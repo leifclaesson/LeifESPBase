@@ -116,6 +116,9 @@ void handleNotFound()
 
 void setup()
 {
+
+	LeifSetupConsole(1024);		//Scrollback buffer 1024 bytes
+
 	//MAC address of your deployed (production) unit
 	if(WiFi.macAddress()=="BC:DD:C2:23:68:54") bDeployedUnit=true;
 
@@ -174,13 +177,13 @@ void loop()
 		//True once every second. Just for convenience.
 	}
 
-	if(Interval1000() && (seconds()%60)==0)	//once a minute
+	if(Interval1000() && (seconds()%3600)==60)	//once an hour
 	{
 		String strUptime;
 		LeifUptimeString(strUptime);
 		//print a status message to the serial console and the telnet console.
 		//you can disable the serial console by compiling with NO_SERIAL_DEBUG
-		csprintf("\nUptime=%s ESP.getFreeHeap()=%u Seconds=%lu  WiFi signal: %i\n",strUptime.c_str(),ESP.getFreeHeap(),seconds(),WiFi.RSSI());
+		csprintf("\nUptime=%s ESP.getFreeHeap()=%u Seconds=%u  WiFi signal: %i\n",strUptime.c_str(),ESP.getFreeHeap(),seconds(),WiFi.RSSI());
 	}
 
 }

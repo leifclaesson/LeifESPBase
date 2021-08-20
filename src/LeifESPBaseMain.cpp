@@ -56,6 +56,7 @@ void BeginMDNS()
 
 #if defined(ARDUINO_ARCH_ESP32)
 
+#include "core_version.h"
 
 
 static unsigned short usLogTable256[256] =
@@ -71,11 +72,19 @@ extern HardwareSerial Serial1;
 #endif
 
 
-
+/*
 #if defined(ARDUINO_ARCH_ESP8266)
 
-static void onWiFiEvent(WiFiEvent_t event)
+void OnWiFiDisconnectedEvent(const WiFiEventStationModeDisconnected & event)
 {
+	(void)event;
+	WiFi.disconnect();
+}
+*/
+
+/*
+static void onWiFiEvent(WiFiEvent_t event)
+{*/
 
 	/*
 	const char * pszReason="Unknown";
@@ -102,7 +111,7 @@ static void onWiFiEvent(WiFiEvent_t event)
 
 	csprintf("WiFi event %i (%s)\n",event,pszReason);
 */
-	if(event==WIFI_EVENT_STAMODE_DISCONNECTED)
+/*	if(event==WIFI_EVENT_STAMODE_DISCONNECTED)
 	{
 		//Bug fixed as of 2021-08-08
 		csprintf("WIFI_EVENT_STAMODE_DISCONNECTED\n");
@@ -111,16 +120,18 @@ static void onWiFiEvent(WiFiEvent_t event)
 
     //sEventsReceived[event]++;
 }
+*/
+/*
 #endif
-
+*/
 
 bool IsWiFiConnected()
 {
-/*#if defined(ARDUINO_ARCH_ESP8266)
+#if defined(ARDUINO_ARCH_ESP8266)
 	if(WiFi.RSSI()>0) return false;
 #endif
-*/
-	return WiFi.isConnected();
+
+	return WiFi.status() == WL_CONNECTED && WiFi.isConnected();
 }
 
 void WiFiWatchdog();
@@ -250,6 +261,66 @@ void HandleCommandLine();
 
 WiFiServer telnet(23);
 WiFiClient telnetClients;
+
+TelnetClientPrint telnetprint(&telnetClients);
+
+size_t TelnetClientPrint::write(uint8_t value)
+{
+	if(value=='\n')
+	{
+		pDest->write('\r');
+	}
+
+	pDest->write(value);
+	return 1;
+}
+
+size_t TelnetClientPrint::dbg(const uint8_t *buffer, size_t size)
+{
+	for(size_t i=0;i<size;i++)
+	{
+		uint8_t temp=buffer[i];
+/*		switch(temp)
+		{
+		case '\r': temp='R'; break;
+		case '\n': temp='N'; break;
+		default: break;
+		}*/
+		pDest->write(temp);
+	}
+	//pDest->write(buffer,size);
+	return size;
+}
+
+size_t TelnetClientPrint::write(const uint8_t *buffer, size_t size)
+{
+
+	size_t begin=0;
+
+//	Serial.printf("write called with %i chars: ",size);
+
+	for(size_t i=0;i<size;i++)
+	{
+//		Serial.printf("%02x ",buffer[i]);
+
+		if(buffer[i]=='\n' || i==size-1)
+		{
+//			Serial.printf("!(%i-%i=%i)",i,begin,i-begin);
+			pDest->write((const uint8_t *) &buffer[begin],i-begin);
+			if(buffer[i]=='\n') pDest->write((const uint8_t *) "\r\n",2);
+			begin=i+1;
+		}
+	}
+
+//	Serial.printf("*\n");
+
+	return size;
+//	return pDest->write(buffer,size);
+}
+
+
+
+
 int disconnectedClient = 1;
 
 String strTelnetCmdBuffer;
@@ -577,6 +648,10 @@ void LeifSetupBegin()
 
 	LeifSetupConsole();
 
+#if defined(ARDUINO_ARCH_ESP8266)
+	analogWriteRange(1023);
+#endif
+
 	if(iStatusLedPin >= 0)
 	{
 		pinMode(iStatusLedPin, OUTPUT);
@@ -584,9 +659,12 @@ void LeifSetupBegin()
 	}
 
 
+/*
 #if defined(ARDUINO_ARCH_ESP8266)
-	WiFi.onEvent(onWiFiEvent, WIFI_EVENT_ANY);
+	//WiFi.onEvent(onWiFiEvent, WIFI_EVENT_ANY);
+	WiFi.onStationModeDisconnected(OnWiFiDisconnectedEvent);
 #endif
+*/
 
 	WiFi.mode(WIFI_STA);
 
@@ -708,6 +786,8 @@ void LeifSetupBegin()
 #if defined(ARDUINO_ARCH_ESP8266)
 		sprintf(temp, "SOC..............: ESP8266\n");
 		s += temp;
+		sprintf(temp, "SDK..............: %s, %s\n",ARDUINO_ESP8266_RELEASE,ESP.getSdkVersion());
+		s += temp;
 #endif
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -723,8 +803,11 @@ void LeifSetupBegin()
 
 			sprintf(temp, "rev %d\n", chip_info.revision);
 			s += temp;
+			sprintf(temp, "SDK..............: %s (%s)\n",ARDUINO_ESP32_RELEASE,ESP.getSdkVersion());
+			s += temp;
 		}
 #endif
+
 
 		sprintf(temp, "Clock Freq.......: %.01f MHz\n", cpu_freq_khz / 1000.0f);
 		s += temp;
@@ -1061,7 +1144,7 @@ void LeifLoop()
 		last_cyclecount = ESP.getCycleCount();
 		last_cc_millis = millis();
 
-		if(WiFi.status() == WL_CONNECTED)
+		if(IsWiFiConnected())
 		{
 			ulSecondCounterWiFi++;
 			ulSecondCounterWiFiWatchdog=0;
@@ -1128,7 +1211,7 @@ void LeifLoop()
 	{
 
 		static bool bIpPrinted = false;
-		if(WiFi.status() == WL_CONNECTED)
+		if(IsWiFiConnected())
 		{
 			if(!bIpPrinted)
 			{
@@ -1160,26 +1243,49 @@ void LeifLoop()
 
 			if((millis() - ulWifiReconnect) >= ulReconnectMs)
 			{
-				ulWifiReconnect = millis();
 
-#ifdef ESP32
-				//for some reason the ESP32 _always_ fails the first attempt, so let's just skip ahead to the second attempt and save some time.
-				if(!iWifiConnAttempts)
+#if defined(ARDUINO_ARCH_ESP8266)
+				static bool bDoDisconnect=false;
+				if(bDoDisconnect)
 				{
-					ulWifiReconnect = millis() - 12000;
+					uint32_t period=(ulReconnectMs>>3);		//disconnect 1/8 of the delay period before reconnecting
+
+					csprintf("Force WiFi Disconnect %u ms ahead of reconnect!\n",period);
+					WiFi.disconnect(false);
+
+					ulWifiReconnect = millis() - (ulReconnectMs - period);
+
+					bDoDisconnect=false;
+
 				}
+				else
+				{
+					bDoDisconnect=true;
+#else
+				{
 #endif
 
-				if(iWifiConnAttempts >= 1 && bAllowBSSID)
-				{
-					bAllowBSSID = false;
+					ulWifiReconnect = millis();
+
+#if defined(ARDUINO_ARCH_ESP32)
+					//for some reason the ESP32 _always_ fails the first attempt, so let's just skip ahead to the second attempt and save some time.
+					if(!iWifiConnAttempts)
+					{
+						ulWifiReconnect = millis() - 12000;
+					}
+#endif
+
+					if(iWifiConnAttempts >= 1 && bAllowBSSID)
+					{
+						bAllowBSSID = false;
+					}
+
+					SetupWifiInternal();
+
+					WiFi.reconnect();
+					iWifiConnAttempts++;
+					ulWifiTotalConnAttempts++;
 				}
-
-				SetupWifiInternal();
-
-				WiFi.reconnect();
-				iWifiConnAttempts++;
-				ulWifiTotalConnAttempts++;
 				ulSecondCounterWiFi = 0;
 			}
 #endif
@@ -1194,7 +1300,6 @@ void LeifLoop()
 
 		}
 	}
-
 
 	if(telnet.hasClient())
 	{
@@ -1211,17 +1316,17 @@ void LeifLoop()
 			LeifUptimeString(strUptime);
 
 
-			telnetClients.printf("\n");
+			telnetprint.printf("\n");
 			for(int k=0;k<2;k++)
 			{
-				for(int i=0;i<79;i++)
+				for(int i=0;i<7;i++)
 				{
-					telnetClients.write('=');
+					telnetprint.write((uint8_t *) "==========",10);
 				}
+				telnetprint.write((uint8_t *) "=========\n",10);
 				if(k>0) break;
-				telnetClients.printf("\nWelcome to %s, ip %s! Uptime: %s\n", GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str());
+				telnetprint.printf("Welcome to %s, ip %s! Uptime: %s\n", GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str());
 			}
-			telnetClients.write("\n");
 
 #ifndef NO_SERIAL_DEBUG
 			Serial.printf("New telnet connection from %s, uptime %s\n", telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
@@ -1231,8 +1336,8 @@ void LeifLoop()
 			Serial1.printf("New telnet connection from %s, uptime %s\n", telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
-			telnetClients.write(scrollbackBuffer.dataFirst(), scrollbackBuffer.sizeFirst());
-			telnetClients.write(scrollbackBuffer.dataSecond(), scrollbackBuffer.sizeSecond());
+			telnetprint.write((const uint8_t *) scrollbackBuffer.dataFirst(), scrollbackBuffer.sizeFirst());
+			telnetprint.write((const uint8_t *) scrollbackBuffer.dataSecond(), scrollbackBuffer.sizeSecond());
 
 			telnetClients.flush();  // clear input buffer, else you get strange characters
 			disconnectedClient = 0;
@@ -1353,6 +1458,8 @@ void LeifLoop()
 
 }
 
+
+char szVersionText[12] = {0};
 
 char szExtCompileDate[32] = {0};
 
@@ -1552,6 +1659,17 @@ byte chartohex(char asciichar)
 }
 
 
+void LeifSetVersionText(const char * szVersion)
+{
+	strncpy(szVersionText,szVersion,sizeof(szVersionText));
+	szVersionText[sizeof(szVersionText)-1]=0;
+}
+
+String LeifGetVersionText()
+{
+	return szVersionText;
+}
+
 
 String LeifGetCompileDate()
 {
@@ -1620,7 +1738,7 @@ String GetArgument(const String & input, const char * argname)
 
 bool LeifIsBSSIDConnection()	//returns true if we're connected an access point configured by BSSID+CH
 {
-	if(WiFi.status() != WL_CONNECTED)
+	if(!IsWiFiConnected())
 	{
 		return false;
 	}

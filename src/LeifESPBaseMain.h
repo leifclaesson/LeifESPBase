@@ -25,3 +25,22 @@ enum eHttpMainTable
 class String;
 typedef std::function<void(String &, eHttpMainTable)> LeifHttpMainTableCallback;
 void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb);
+
+class WiFiClient;
+class TelnetClientPrint : public Print
+{
+public:
+	TelnetClientPrint(WiFiClient * pDestination)
+	{
+		this->pDest=pDestination;
+	}
+
+	WiFiClient * pDest;
+
+    size_t dbg(const uint8_t *buffer, size_t size);
+
+	size_t write(uint8_t value) override;
+    size_t write(const uint8_t *buffer, size_t size);
+};
+
+extern TelnetClientPrint telnetprint;
