@@ -482,6 +482,11 @@ bool IsNewWifiConnection()
 }
 
 
+void LeifSetProjectName(const char * szProjectName)
+{
+	strProjectName=szProjectName;
+}
+
 
 
 class MyWiFiSTAClass:
@@ -774,7 +779,16 @@ void LeifSetupBegin()
 
 	server.on("/sysinfo", []()
 	{
+#if defined(ARDUINO_ARCH_ESP8266)
+		ESP.setIramHeap();
+		uint32_t heapFreeIram=ESP.getFreeHeap();
+		ESP.resetHeap();
+		ESP.setDramHeap();
+		uint32_t heapFreeDram=ESP.getFreeHeap();
+		ESP.resetHeap();
+#else
 		uint32_t heapFree = ESP.getFreeHeap();
+#endif
 
 		String s;
 
@@ -839,8 +853,15 @@ void LeifSetupBegin()
 		sprintf(temp, "Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 		s += temp;
 
+#if defined(ARDUINO_ARCH_ESP8266)
+		sprintf(temp, "Heap free (IRAM).: %i\n", heapFreeIram);
+		s += temp;
+		sprintf(temp, "Heap free (DRAM).: %i\n", heapFreeDram);
+		s += temp;
+#else
 		sprintf(temp, "Heap free........: %i\n", heapFree);
 		s += temp;
+#endif
 #if defined(ARDUINO_ARCH_ESP8266)
 #ifndef NO_MAX_FREE_BLOCKSIZE
 		sprintf(temp, "Heap max alloc...: %i\n", ESP.getMaxFreeBlockSize());

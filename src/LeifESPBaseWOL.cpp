@@ -1,4 +1,5 @@
 #include "LeifESPBase.h"
+#ifndef NO_WOL
 #include "LeifESPBaseWOL.h"
 
 #include <WiFiUdp.h>
@@ -40,3 +41,4 @@ void WakeOnLan(WiFiUDP & udp, const char * mac)
 
 
 }
+#endif
