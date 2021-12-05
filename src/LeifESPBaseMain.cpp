@@ -1,18 +1,13 @@
 #include "LeifESPBaseMain.h"
 #include "LeifESPBase.h"
 
+
 #if defined(ARDUINO_ARCH_ESP8266)
 #include <ESP8266WiFi.h>
-#ifndef NO_GLOBAL_MDNS
-#include <ESP8266mDNS.h>
-#endif
 #include <ESP8266WebServer.h>
 #else
 #include "WiFi.h"
 #include "WebServer.h"
-	#ifndef NO_GLOBAL_MDNS
-		#include "ESPmDNS.h"
-	#endif
 #endif
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
@@ -22,37 +17,16 @@ bool bUpdatingOTA = false;
 #include "..\environment_setup.h"
 
 
+#if defined(ARDUINO_ARCH_ESP8266)
+#if ARDUINO_ESP8266_MAJOR >= 3
+#define HAS_IRAM_HEAP
+#endif
+#endif
+
 uint32_t serial_debug_rate=115200;
 
 static unsigned long ulSecondCounterWiFiWatchdog = 0;
 
-#ifndef NO_GLOBAL_MDNS
-uint32_t ulLastMDNS = 0;
-bool bMDNSOpen = false;
-
-void BeginMDNS()
-{
-	if(bMDNSOpen)
-	{
-		return;
-		//MDNS.end();
-		//bMDNSOpen = false;
-	}
-
-	if(!MDNS.begin(GetHostName()))
-	{
-		csprintf("Error setting up MDNS responder for %s!\n", GetHostName());
-	}
-	else
-	{
-		// Add service to MDNS-SD
-		MDNS.addService("http", "tcp", 80);
-		bMDNSOpen = true;
-	}
-
-	ulLastMDNS = millis();
-}
-#endif
 
 #if defined(ARDUINO_ARCH_ESP32)
 
@@ -129,6 +103,7 @@ bool IsWiFiConnected()
 {
 #if defined(ARDUINO_ARCH_ESP8266)
 	if(WiFi.RSSI()>0) return false;
+	if(!WiFi.localIP().isSet()) return false;
 #endif
 
 	return WiFi.status() == WL_CONNECTED && WiFi.isConnected();
@@ -297,23 +272,26 @@ size_t TelnetClientPrint::write(const uint8_t *buffer, size_t size)
 
 	size_t begin=0;
 
-//	Serial.printf("write called with %i chars: ",size);
+	//Serial.printf("write called with %i chars: '%s'\n",size,buffer);
 
 	for(size_t i=0;i<size;i++)
 	{
-//		Serial.printf("%02x ",buffer[i]);
+		//Serial.printf("%02x ",buffer[i]);
 
 		if(buffer[i]=='\n' || i==size-1)
 		{
-//			Serial.printf("!(%i-%i=%i)",i,begin,i-begin);
-			pDest->write((const uint8_t *) &buffer[begin],i-begin);
-			if(buffer[i]=='\n') pDest->write((const uint8_t *) "\r\n",2);
+			bool bLastCharNewLine=buffer[i]=='\n';
+			int add=0;
+			if(!bLastCharNewLine) add=1;	//if the last character is not a new line, we need to pass it through!
+			//Serial.printf("!(%i-%i=%i)",i,begin,i-begin);
+			pDest->write((const uint8_t *) &buffer[begin],i-begin+add);
+			if(bLastCharNewLine) pDest->write((const uint8_t *) "\r\n",2);
 			begin=i+1;
 		}
+
 	}
 
-//	Serial.printf("*\n");
-
+	//Serial.printf("*\n");
 	return size;
 //	return pDest->write(buffer,size);
 }
@@ -758,11 +736,16 @@ void LeifSetupBegin()
 
 	ArduinoOTA.onError([](ota_error_t error)
 	{
-		(void)error;
-		DoOnShutdownCallback("OTA_FAILED");
-		csprintf("OTA update FAILED (%i)\n",error);
-		delay(500);
-		ESP.restart();
+		if(error==OTA_AUTH_ERROR)
+		{
+			csprintf("OTA AUTH error!\n");
+		}
+		else
+		{
+			DoOnShutdownCallback("OTA_FAILED");
+			csprintf("OTA update FAILED (%i)\n",error);
+			ESP.restart();
+		}
 	});
 #endif
 
@@ -779,7 +762,10 @@ void LeifSetupBegin()
 
 	server.on("/sysinfo", []()
 	{
-#if defined(ARDUINO_ARCH_ESP8266)
+#if defined(HAS_IRAM_HEAP)
+		ESP.setExternalHeap();
+		uint32_t heapFreeExt=ESP.getFreeHeap();
+		ESP.resetHeap();
 		ESP.setIramHeap();
 		uint32_t heapFreeIram=ESP.getFreeHeap();
 		ESP.resetHeap();
@@ -853,7 +839,9 @@ void LeifSetupBegin()
 		sprintf(temp, "Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 		s += temp;
 
-#if defined(ARDUINO_ARCH_ESP8266)
+#if defined(HAS_IRAM_HEAP)
+		sprintf(temp, "Heap free (Ext).: %i\n", heapFreeExt);
+		s += temp;
 		sprintf(temp, "Heap free (IRAM).: %i\n", heapFreeIram);
 		s += temp;
 		sprintf(temp, "Heap free (DRAM).: %i\n", heapFreeDram);
@@ -909,8 +897,6 @@ void LeifSetupBegin()
 
 void LeifSetupEnd()
 {
-	//Serial.println("mDNS responder started");
-
 	server.begin();
 #ifndef NO_OTA
 	ArduinoOTA.begin();
@@ -1091,6 +1077,13 @@ bool LeifGetInvertLedBlink()
 	return bInvertLedBlink;
 }
 
+static uint32_t ulRestartTimestamp=0;
+
+void LeifScheduleRestart(uint32_t ms)
+{
+	ulRestartTimestamp=millis()+ms;
+}
+
 
 void LeifLoop()
 {
@@ -1130,9 +1123,6 @@ void LeifLoop()
 #endif
 	server.handleClient();
 #if defined(ARDUINO_ARCH_ESP8266)
-#ifndef NO_GLOBAL_MDNS
-	MDNS.update();
-#endif
 #endif
 
 
@@ -1140,6 +1130,14 @@ void LeifLoop()
 #ifdef USE_HOMIE
 	homie.Loop();
 #endif
+
+
+	if(ulRestartTimestamp && (int32_t) (millis()-ulRestartTimestamp)>0)
+	{
+		ulRestartTimestamp=0;
+		ESP.restart();
+	}
+
 
 
 	HandleCommandLine();
@@ -1246,10 +1244,6 @@ void LeifLoop()
 				bAllowBSSID = true;
 				bNewWifiConnection = true;
 
-#ifndef NO_GLOBAL_MDNS
-				BeginMDNS();
-#endif
-
 			}
 
 		}
@@ -1258,7 +1252,7 @@ void LeifLoop()
 			bIpPrinted = false;
 #if defined(WIFI_RECONNECT)
 			uint32_t ulReconnectMs=15000;
-			if(iWifiConnAttempts>5) ulReconnectMs=30000;	//rec onnect more slowly
+			if(iWifiConnAttempts>5) ulReconnectMs=30000;	//reconnect more slowly
 			if(iWifiConnAttempts>10) ulReconnectMs=60000;	//reconnect more slowly
 			if(iWifiConnAttempts>15) ulReconnectMs=120000;	//reconnect more slowly
 
@@ -1855,8 +1849,8 @@ void WiFiWatchdog()
 
 	if(ulSecondCounterWiFiWatchdog>150)
 	{
-		csprintf("WiFi watchdog: WiFi has been stuck for a while, force disconnect and retry\n");
-		WiFi.disconnect();
+		//csprintf("WiFi watchdog: WiFi has been stuck for a while, force disconnect and retry\n");
+		WiFi.disconnect(false);
 		ulSecondCounterWiFiWatchdog=0;
 	}
 
