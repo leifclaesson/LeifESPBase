@@ -16,6 +16,9 @@ bool bUpdatingOTA = false;
 
 #include "..\environment_setup.h"
 
+#ifndef WDT_TIMEOUT
+#define WDT_TIMEOUT 10
+#endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
 #if ARDUINO_ESP8266_MAJOR >= 3
@@ -29,6 +32,8 @@ static unsigned long ulSecondCounterWiFiWatchdog = 0;
 
 
 #if defined(ARDUINO_ARCH_ESP32)
+
+#include <esp_task_wdt.h>
 
 #include "core_version.h"
 
@@ -683,7 +688,19 @@ void LeifSetupBegin()
 
 		telnet.close();
 		delay(250);
+
 	});
+
+
+	ArduinoOTA.onProgress([](unsigned int param1, unsigned int param2)
+	{
+#if defined(ARDUINO_ARCH_ESP32)
+		esp_task_wdt_reset();
+#endif
+	}
+	);
+
+
 
 	ArduinoOTA.onEnd([]()   // do a fancy thing with our board led at end
 	{
@@ -902,6 +919,11 @@ void LeifSetupEnd()
 	ArduinoOTA.begin();
 #endif
 
+#if defined(ARDUINO_ARCH_ESP32)
+	esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+	esp_task_wdt_add(NULL); //add current thread to WDT watch
+#endif
+
 
 }
 
@@ -1084,7 +1106,6 @@ void LeifScheduleRestart(uint32_t ms)
 	ulRestartTimestamp=millis()+ms;
 }
 
-
 void LeifLoop()
 {
 
@@ -1175,6 +1196,13 @@ void LeifLoop()
 		}
 
 		WiFiWatchdog();
+
+
+#if defined(ARDUINO_ARCH_ESP32)
+		esp_task_wdt_reset();
+#endif
+
+
 
 	}
 	else
@@ -1288,12 +1316,19 @@ void LeifLoop()
 					{
 						ulWifiReconnect = millis() - 12000;
 					}
-#endif
 
+					if(iWifiConnAttempts >= 2 && bAllowBSSID)
+					{
+						bAllowBSSID = false;
+					}
+#else
 					if(iWifiConnAttempts >= 1 && bAllowBSSID)
 					{
 						bAllowBSSID = false;
 					}
+
+#endif
+
 
 					SetupWifiInternal();
 
