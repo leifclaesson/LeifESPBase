@@ -14,6 +14,7 @@ typedef std::function<void(const String &, eCommandLineSource)> LeifCommandCallb
 typedef std::function<void(const char *)> LeifOnShutdownCallback;
 void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb);
 void LeifRegisterCommandCallback(LeifCommandCallback cb);
+void LeifSetMaxCommandLength(uint16_t max_chars);
 
 
 enum eHttpMainTable

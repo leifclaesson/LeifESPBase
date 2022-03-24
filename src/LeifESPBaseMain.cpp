@@ -695,6 +695,7 @@ void LeifSetupBegin()
 	ArduinoOTA.onProgress([](unsigned int param1, unsigned int param2)
 	{
 #if defined(ARDUINO_ARCH_ESP32)
+//		csprintf("ONPROGRESS: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
 #endif
 	}
@@ -1199,6 +1200,7 @@ void LeifLoop()
 
 
 #if defined(ARDUINO_ARCH_ESP32)
+//		csprintf("LEIFLOOP: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
 #endif
 
@@ -1808,10 +1810,16 @@ bool LeifIsBSSIDConnection()	//returns true if we're connected an access point c
 }
 
 
+uint16_t uCmdMax=16;
+
+
+void LeifSetMaxCommandLength(uint16_t max_chars)
+{
+	uCmdMax=max_chars;
+}
+
 void HandleCommandLine()
 {
-
-	uint16_t uCmdMax=16;
 
 	while(telnetClients.available())
 	{
