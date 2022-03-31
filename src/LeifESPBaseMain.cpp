@@ -1825,20 +1825,41 @@ void HandleCommandLine()
 	{
 		char inputChar=telnetClients.read();
 
-		if(inputChar=='\r' || inputChar=='\n')
+		static int iNegotiate=0;
+		if(iNegotiate>0)
 		{
-			if(strTelnetCmdBuffer.length())
-			{
-				DoCommandCallback(strTelnetCmdBuffer,eCommandLineSource_Telnet);
-			}
-
-			strTelnetCmdBuffer="";
+			iNegotiate--;
+			continue;
 		}
-		else
+
+		if(vecOnCommand.size())
 		{
-			if(vecOnCommand.size())
+			switch(inputChar)
 			{
+			case '\r':
+			case '\n':
+				if(strTelnetCmdBuffer.length())
+				{
+					DoCommandCallback(strTelnetCmdBuffer,eCommandLineSource_Telnet);
+				}
+				strTelnetCmdBuffer="";
+				break;
+			case '\b':
+			case 0x7f:
+				{
+					int len=strTelnetCmdBuffer.length();
+					if(len)
+					{
+						strTelnetCmdBuffer.remove(len-1, 1);
+					}
+				}
+				break;
+			case 0xff:	//ignore telnet negotiation
+				iNegotiate=2;
+				break;
+			default:
 				strTelnetCmdBuffer+=inputChar;
+				break;
 			}
 		}
 	}
