@@ -617,6 +617,14 @@ int iAnalogWriteBits = 12;
 int iAnalogWriteBits = 10;
 #endif
 
+int iLedBrightnessScale=12;
+
+void LeifSetLedBrightness(int scale)
+{
+	if(scale<0) scale=0; else if(scale>3) scale=3;
+	iLedBrightnessScale=13-scale;
+}
+
 void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 {
 	bAllowLedFade = bAllowFade;
@@ -1461,13 +1469,13 @@ void LeifLoop()
 
 			//if(Interval100()) csprintf("use %i\n",use);
 
-			if(iAnalogWriteBits < 12)
+			if(iAnalogWriteBits < iLedBrightnessScale)
 			{
-				use >>= (12 - iAnalogWriteBits);
+				use >>= (iLedBrightnessScale - iAnalogWriteBits);
 			}
-			else if(iAnalogWriteBits > 12)
+			else if(iAnalogWriteBits > iLedBrightnessScale)
 			{
-				use <<= (iAnalogWriteBits - 12);
+				use <<= (iAnalogWriteBits - iLedBrightnessScale);
 			}
 
 
