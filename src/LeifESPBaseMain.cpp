@@ -20,12 +20,6 @@ bool bUpdatingOTA = false;
 #define WDT_TIMEOUT 10
 #endif
 
-#if defined(ARDUINO_ARCH_ESP8266)
-#if ARDUINO_ESP8266_MAJOR >= 3
-#define HAS_IRAM_HEAP
-#endif
-#endif
-
 uint32_t serial_debug_rate=115200;
 
 static unsigned long ulSecondCounterWiFiWatchdog = 0;
@@ -788,19 +782,19 @@ void LeifSetupBegin()
 
 	server.on("/sysinfo", []()
 	{
-#if defined(HAS_IRAM_HEAP)
+#ifdef MMU_EXTERNAL_HEAP
 		ESP.setExternalHeap();
 		uint32_t heapFreeExt=ESP.getFreeHeap();
 		ESP.resetHeap();
+#endif
+#ifdef MMU_IRAM_HEAP
 		ESP.setIramHeap();
 		uint32_t heapFreeIram=ESP.getFreeHeap();
 		ESP.resetHeap();
+#endif
 		ESP.setDramHeap();
 		uint32_t heapFreeDram=ESP.getFreeHeap();
 		ESP.resetHeap();
-#else
-		uint32_t heapFree = ESP.getFreeHeap();
-#endif
 
 		String s;
 
@@ -865,17 +859,16 @@ void LeifSetupBegin()
 		sprintf(temp, "Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
 		s += temp;
 
-#if defined(HAS_IRAM_HEAP)
+#ifdef MMU_EXTERNAL_HEAP
 		sprintf(temp, "Heap free (Ext).: %i\n", heapFreeExt);
 		s += temp;
+#endif
+#ifdef MMU_IRAM_HEAP
 		sprintf(temp, "Heap free (IRAM).: %i\n", heapFreeIram);
 		s += temp;
+#endif
 		sprintf(temp, "Heap free (DRAM).: %i\n", heapFreeDram);
 		s += temp;
-#else
-		sprintf(temp, "Heap free........: %i\n", heapFree);
-		s += temp;
-#endif
 #if defined(ARDUINO_ARCH_ESP8266)
 #ifndef NO_MAX_FREE_BLOCKSIZE
 		sprintf(temp, "Heap max alloc...: %i\n", ESP.getMaxFreeBlockSize());
