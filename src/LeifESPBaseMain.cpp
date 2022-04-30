@@ -784,9 +784,10 @@ void LeifSetupBegin()
 		uint32_t heapFreeIram=ESP.getFreeHeap();
 		ESP.resetHeap();
 #endif
-		ESP.setDramHeap();
+//		ESP.setDramHeap();
 		uint32_t heapFreeDram=ESP.getFreeHeap();
-		ESP.resetHeap();
+//		ESP.resetHeap();
+
 
 		String s;
 
