@@ -541,7 +541,7 @@ void SetupWifiInternal()
 		const char * use_ssid = wifi_ssid;
 		const char * use_key = wifi_key;
 
-		if(backup_ssid)
+		if(backup_ssid && strlen(backup_ssid))
 		{
 			int x = iWifiConnAttempts / 2;
 			if(x && (x & 1))
