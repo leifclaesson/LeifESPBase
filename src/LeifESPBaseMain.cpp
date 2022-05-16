@@ -231,6 +231,17 @@ size_t ScrollbackBuffer::sizeSecond()
 ScrollbackBuffer scrollbackBuffer;
 
 
+bool g_bAllowSerialCommands=true;
+void LeifSetAllowSerialCommands(bool bAllow)
+{
+	g_bAllowSerialCommands=bAllow;
+}
+
+bool LeifGetAllowSerialCommands()
+{
+	return g_bAllowSerialCommands;
+}
+
 void HandleCommandLine();
 
 WiFiServer telnet(23);
@@ -1878,20 +1889,24 @@ void HandleCommandLine()
 	{
 		char inputChar=Serial.read();
 
-		if(inputChar=='\r' || inputChar=='\n')
+		if(g_bAllowSerialCommands)
 		{
-			if(strSerialCmdBuffer.length())
-			{
-				DoCommandCallback(strSerialCmdBuffer,eCommandLineSource_Serial);
-			}
 
-			strSerialCmdBuffer="";
-		}
-		else
-		{
-			if(vecOnCommand.size())
+			if(inputChar=='\r' || inputChar=='\n')
 			{
-				strSerialCmdBuffer+=inputChar;
+				if(strSerialCmdBuffer.length())
+				{
+					DoCommandCallback(strSerialCmdBuffer,eCommandLineSource_Serial);
+				}
+
+				strSerialCmdBuffer="";
+			}
+			else
+			{
+				if(vecOnCommand.size())
+				{
+					strSerialCmdBuffer+=inputChar;
+				}
 			}
 		}
 	}

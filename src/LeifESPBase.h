@@ -123,6 +123,9 @@ void LeifSetSuppressLedWrite(bool bSuppress);
 void LeifSetAllowWifiConnection(bool bAllow);
 bool LeifGetAllowWifiConnection();
 
+void LeifSetAllowSerialCommands(bool bAllow);
+bool LeifGetAllowSerialCommands();
+
 bool IsNewWifiConnection();	//returns true ONCE after a new wifi connection has been established
 
 void LeifSecondsToShortUptimeString(String & string,unsigned long ulSeconds);
