@@ -1850,11 +1850,12 @@ void HandleCommandLine()
 			switch(inputChar)
 			{
 			case '\r':
-			case '\n':
-				if(strTelnetCmdBuffer.length())
+				//if(strTelnetCmdBuffer.length())
 				{
 					DoCommandCallback(strTelnetCmdBuffer,eCommandLineSource_Telnet);
 				}
+				//fall through
+			case '\n':
 				strTelnetCmdBuffer="";
 				break;
 			case '\b':
@@ -1892,21 +1893,24 @@ void HandleCommandLine()
 		if(g_bAllowSerialCommands)
 		{
 
-			if(inputChar=='\r' || inputChar=='\n')
+			switch(inputChar)
 			{
-				if(strSerialCmdBuffer.length())
+			case '\r':
+				//if(strSerialCmdBuffer.length())
 				{
 					DoCommandCallback(strSerialCmdBuffer,eCommandLineSource_Serial);
 				}
+				//fall through
+			case '\n':
 
 				strSerialCmdBuffer="";
-			}
-			else
-			{
+				break;
+			default:
 				if(vecOnCommand.size())
 				{
 					strSerialCmdBuffer+=inputChar;
 				}
+				break;
 			}
 		}
 	}
