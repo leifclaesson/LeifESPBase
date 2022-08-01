@@ -1496,7 +1496,7 @@ void LeifLoop()
 		}
 		else
 		{
-			int interval = 2000;
+			int interval = 15000;
 			if(!IsWiFiConnected())
 			{
 				interval = 500;
