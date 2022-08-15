@@ -16,6 +16,8 @@ void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb);
 void LeifRegisterCommandCallback(LeifCommandCallback cb);
 void LeifSetMaxCommandLength(uint16_t max_chars);
 
+typedef std::function<const char * (const String &)> LeifGetWiFiAPName;
+void LeifRegisterGetWiFiAPName(LeifGetWiFiAPName fn);
 
 enum eHttpMainTable
 {

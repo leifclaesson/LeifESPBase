@@ -324,6 +324,12 @@ uint32_t ulWifiTotalConnAttempts = 0;
 #endif
 
 
+LeifGetWiFiAPName fnGetWiFiAPName;
+void LeifRegisterGetWiFiAPName(LeifGetWiFiAPName fn)
+{
+	fnGetWiFiAPName=fn;
+}
+
 static std::vector<LeifCommandCallback> vecOnCommand;
 
 void LeifRegisterCommandCallback(LeifCommandCallback cb)
@@ -1656,6 +1662,14 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 	string.concat("BSSID: ");
 	string.concat(WiFi.BSSIDstr());
+
+	if(fnGetWiFiAPName)
+	{
+		string.concat(" (");
+		string.concat(fnGetWiFiAPName(WiFi.BSSIDstr()));
+		string.concat(")");
+	}
+
 
 	string.concat("&nbsp;&nbsp;&nbsp;CH: ");
 	string.concat(WiFi.channel());
