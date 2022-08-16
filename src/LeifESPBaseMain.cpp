@@ -381,6 +381,18 @@ uint8_t cBSSID[6] = {0, 0, 0, 0, 0, 0};
 int iWifiChannel = -1;
 bool bAllowBSSID = false;
 
+int8_t rssi_history[8];
+int16_t rssi_sum;
+uint8_t rssi_history_idx;
+int8_t max_rssi=-128;
+
+int8_t get_avg_rssi()
+{
+	return rssi_sum/(int) sizeof(rssi_history);
+}
+
+int iHealthDisconnects=0;
+
 String g_lastWifiSSID = wifi_ssid;
 String g_lastWifiPSK = wifi_key;
 int g_lastWifiChannel = iWifiChannel;
@@ -524,6 +536,16 @@ String MacToString(const uint8_t * mac)
 	return temp;
 }
 
+void ResetRSSIHistory()
+{
+	rssi_sum=-128*(int16_t) sizeof(rssi_history);
+	for(int i=0;i<sizeof(rssi_history);i++)
+	{
+		rssi_history[i]=-128;
+	}
+	rssi_history_idx=0;
+}
+
 void SetupWifiInternal()
 {
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -535,6 +557,8 @@ void SetupWifiInternal()
 #if defined(WIFI_RECONNECT)
 	WiFi.setAutoConnect(false);
 	WiFi.setAutoReconnect(false);
+
+	ResetRSSIHistory();
 
 
 	if(iWifiChannel >= 0 && bAllowBSSID)
@@ -672,6 +696,8 @@ void LeifSetupBegin()
 	WiFi.onStationModeDisconnected(OnWiFiDisconnectedEvent);
 #endif
 */
+
+	ResetRSSIHistory();
 
 	WiFi.mode(WIFI_STA);
 
@@ -1697,7 +1723,9 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 	string.concat("&nbsp;&nbsp;&nbsp;RSSI: ");
 	string.concat(WiFi.RSSI());
-	string.concat("</td>");
+	string.concat(" (max ");
+	string.concat(max_rssi);
+	string.concat(")</td>");
 	string.concat("</tr>");
 
 	if(fnHttpMainTableExtraCallback)
@@ -1937,6 +1965,9 @@ void HandleCommandLine()
 
 }
 
+
+void WiFiHealthMaintenance();
+
 void WiFiWatchdog()
 {
 
@@ -1950,9 +1981,74 @@ void WiFiWatchdog()
 	{
 		//csprintf("WiFi watchdog: WiFi has been stuck for a while, force disconnect and retry\n");
 		WiFi.disconnect(false);
+		ulSecondCounterWiFi=0;
 		ulSecondCounterWiFiWatchdog=0;
 	}
 
+	int8_t cur_rssi=WiFi.RSSI();
+	if(cur_rssi>=0) cur_rssi=-128;
+	rssi_sum -= rssi_history[rssi_history_idx];
+	rssi_history[rssi_history_idx]=cur_rssi;
+	rssi_sum += cur_rssi;
+	rssi_history_idx++;
+	rssi_history_idx&=7;
+
+	int8_t avg_rssi=get_avg_rssi();
+
+	if(max_rssi<avg_rssi) max_rssi=avg_rssi;
+
+	//csprintf("cur rssi: %i, avg: %i  record: %i\n",cur_rssi, avg_rssi, max_rssi);
+
+
+	if((ulSecondCounterWiFi & 2047) == 2047)
+	{
+		WiFiHealthMaintenance();
+	}
+
+
 //	csprintf("WD %u ",ulSecondCounterWiFiWatchdog);
+
+}
+
+
+void WiFiHealthMaintenance()
+{
+	//csprintf("WiFi health maintenance\n");
+
+	bool bDoDisconnect=false;
+
+	if(iWifiChannel>=0)	//we're supposed to use a BSSID connection
+	{
+		if(!LeifIsBSSIDConnection())
+		{	//but we're not, so disconnect.
+			csprintf("WiFi Health Maintenance: We're not on the correct BSSID connection. Disconnecting. (count: %i)\n",iHealthDisconnects);
+			bAllowBSSID=true;
+			bDoDisconnect=true;
+		}
+	}
+	else
+	{
+		int8_t avg_rssi=get_avg_rssi();
+
+		if((int16_t) avg_rssi < (int16_t) max_rssi-10)
+		{
+			csprintf("WiFi Health Maintenance: Current RSSI %i too low compared to max %i. Disconnecting. (count: %i)\n", avg_rssi, max_rssi,iHealthDisconnects);
+			bDoDisconnect=true;
+		}
+	}
+
+	if(bDoDisconnect)
+	{
+
+	#if defined(ARDUINO_ARCH_ESP32)
+		iWifiConnAttempts=1;	//to account for the code above to work around that esp32 always fails the first attempt
+	#else
+		iWifiConnAttempts=0;
+	#endif
+		ulSecondCounterWiFi=0;
+		WiFi.disconnect(false);
+		iHealthDisconnects++;
+	}
+
 
 }
