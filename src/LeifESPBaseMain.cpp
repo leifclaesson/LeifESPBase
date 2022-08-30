@@ -2033,6 +2033,13 @@ void WiFiHealthMaintenance()
 		if((int16_t) avg_rssi < (int16_t) max_rssi-10)
 		{
 			csprintf("WiFi Health Maintenance: Current RSSI %i too low compared to max %i. Disconnecting. (count: %i)\n", avg_rssi, max_rssi,iHealthDisconnects);
+
+			if(max_rssi>-90)
+			{
+				max_rssi-=2;
+				if(max_rssi<-90) max_rssi=-90;
+			}
+
 			bDoDisconnect=true;
 		}
 	}
