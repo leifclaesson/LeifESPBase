@@ -740,7 +740,7 @@ void LeifSetupBegin()
 	ArduinoOTA.onProgress([](unsigned int param1, unsigned int param2)
 	{
 #if defined(ARDUINO_ARCH_ESP32)
-//		csprintf("ONPROGRESS: wdt reset from core %i\n",xPortGetCoreID());
+		//csprintf("ONPROGRESS: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
 #endif
 	}
@@ -1245,7 +1245,7 @@ void LeifLoop()
 
 
 #if defined(ARDUINO_ARCH_ESP32)
-//		csprintf("LEIFLOOP: wdt reset from core %i\n",xPortGetCoreID());
+		//csprintf("LEIFLOOP: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
 #endif
 
