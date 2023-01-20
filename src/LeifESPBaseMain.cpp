@@ -1152,6 +1152,13 @@ void LeifScheduleRestart(uint32_t ms)
 	ulRestartTimestamp=millis()+ms;
 }
 
+static uint32_t ulReconnectTimestamp=0;
+
+void LeifScheduleReconnect(uint32_t ms)
+{
+	ulReconnectTimestamp=millis()+ms;
+}
+
 void LeifLoop()
 {
 
@@ -1203,6 +1210,13 @@ void LeifLoop()
 	{
 		ulRestartTimestamp=0;
 		ESP.restart();
+	}
+
+
+	if(ulReconnectTimestamp && (int32_t) (millis()-ulReconnectTimestamp)>0)
+	{
+		ulReconnectTimestamp=0;
+		WiFi.disconnect(0);
 	}
 
 
