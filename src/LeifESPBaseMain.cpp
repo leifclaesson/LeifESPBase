@@ -644,7 +644,7 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 
 };
 
-#ifdef NO_FADE_LED
+#ifndef NO_FADE_LED
 uint8_t ucLedFadeChannel = 15;	//ESP32 ledc
 static bool bAllowLedFade = true;
 #if defined(ARDUINO_ARCH_ESP32)
