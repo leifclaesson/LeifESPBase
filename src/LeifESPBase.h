@@ -103,6 +103,7 @@ void LeifLoop();
 void LeifHtmlMainPageCommonHeader(String & string);
 
 void LeifScheduleRestart(uint32_t ms);
+void LeifScheduleReconnect(uint32_t ms);
 
 bool Interval50();
 bool Interval100();
