@@ -644,6 +644,7 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 
 };
 
+#ifdef NO_FADE_LED
 uint8_t ucLedFadeChannel = 15;	//ESP32 ledc
 static bool bAllowLedFade = true;
 #if defined(ARDUINO_ARCH_ESP32)
@@ -665,6 +666,7 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 	bAllowLedFade = bAllowFade;
 	iAnalogWriteBits = analogWriteBits;
 }
+#endif
 
 bool bLeifSetupBeginDone = false;
 void LeifSetupBegin()
@@ -754,6 +756,16 @@ void LeifSetupBegin()
 		csprintf("OTA update done\n");
 		DoOnShutdownCallback("OTA_DONE");
 
+#ifdef NO_FADE_LED
+		if(iStatusLedPin >= 0)
+		{
+			for(int i=0;i<10;i++)
+			{
+				digitalWrite(iStatusLedPin, (i & 1));
+			}
+		}
+
+#else
 #if defined(ARDUINO_ARCH_ESP32)
 		if(iStatusLedPin >= 0)
 		{
@@ -790,6 +802,7 @@ void LeifSetupBegin()
 			digitalWrite(iStatusLedPin, HIGH);
 #endif
 		}
+#endif
 
 		csprintf("OTA update triggering restart\n");
 		delay(500);
@@ -1458,6 +1471,7 @@ void LeifLoop()
 
 	if(iStatusLedPin >= 0 && bAllowLedWrite)
 	{
+#ifdef NO_FADE_LED
 		if(bAllowLedFade)
 		{
 
@@ -1527,6 +1541,7 @@ void LeifLoop()
 
 		}
 		else
+#endif
 		{
 			int interval = 15000;
 			if(!IsWiFiConnected())

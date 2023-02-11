@@ -1,4 +1,5 @@
 #include "LeifESPBase.h"
+#ifndef NO_SOFT_AP
 
 static uint32_t timestampSoftAP=0;
 
@@ -60,4 +61,4 @@ void LeifSetSoftAP(bool bEnable, const char * szPSK)
 
 }
 
-
+#endif
