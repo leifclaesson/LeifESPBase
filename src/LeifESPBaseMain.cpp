@@ -960,12 +960,14 @@ void LeifSetupBegin()
 
 
 #if defined(ARDUINO_ARCH_ESP32)
+#ifndef NO_FADE_LED
 	if(bAllowLedFade)
 	{
 		ledcSetup(ucLedFadeChannel, 500, 12);
 		ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
 
 	}
+#endif
 #endif
 
 
@@ -1485,7 +1487,7 @@ void LeifLoop()
 
 	if(iStatusLedPin >= 0 && bAllowLedWrite)
 	{
-#ifdef NO_FADE_LED
+#ifndef NO_FADE_LED
 		if(bAllowLedFade)
 		{
 
