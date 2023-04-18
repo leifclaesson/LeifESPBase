@@ -539,7 +539,7 @@ String MacToString(const uint8_t * mac)
 void ResetRSSIHistory()
 {
 	rssi_sum=-128*(int16_t) sizeof(rssi_history);
-	for(int i=0;i<sizeof(rssi_history);i++)
+	for(int i=0;i<(int) sizeof(rssi_history);i++)
 	{
 		rssi_history[i]=-128;
 	}
@@ -741,6 +741,8 @@ void LeifSetupBegin()
 
 	ArduinoOTA.onProgress([](unsigned int param1, unsigned int param2)
 	{
+		(void)param1;
+		(void)param2;
 #if defined(ARDUINO_ARCH_ESP32)
 		//csprintf("ONPROGRESS: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
