@@ -987,6 +987,10 @@ void LeifSetupEnd()
 	esp_task_wdt_add(NULL); //add current thread to WDT watch
 #endif
 
+	if(strProjectName.length())
+	{
+		csprintf("Firmware: %s\n",strProjectName.c_str());
+	}
 
 }
 
