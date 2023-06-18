@@ -527,11 +527,11 @@ String MacToString(const uint8_t * mac)
 	char temp[20];
 	if(mac)
 	{
-		sprintf(temp, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+		sprintf(temp, PSTR("%02X:%02X:%02X:%02X:%02X:%02X"), mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	}
 	else
 	{
-		sprintf(temp, "*MAC IS NULL PTR*");
+		sprintf(temp, PSTR("*MAC IS NULL PTR*"));
 	}
 	return temp;
 }
@@ -563,7 +563,7 @@ void SetupWifiInternal()
 
 	if(iWifiChannel >= 0 && bAllowBSSID)
 	{
-		csprintf("WiFi attempting to connect to %s at BSSID %s, Ch %i (attempt %i)...\n", wifi_ssid, MacToString(cBSSID).c_str(), iWifiChannel, iWifiConnAttempts);
+		csprintf(PSTR("WiFi attempting to connect to %s at BSSID %s, Ch %i (attempt %i)...\n"), wifi_ssid, MacToString(cBSSID).c_str(), iWifiChannel, iWifiConnAttempts);
 		WiFi.begin(wifi_ssid, wifi_key, iWifiChannel, cBSSID, true);
 
 		g_lastWifiSSID = wifi_ssid;
@@ -592,7 +592,7 @@ void SetupWifiInternal()
 			}
 		}
 
-		csprintf("WiFi attempting to connect to %s (attempt %i)...\n", use_ssid, iWifiConnAttempts);
+		csprintf(PSTR("WiFi attempting to connect to %s (attempt %i)...\n"), use_ssid, iWifiConnAttempts);
 		WiFi.begin(use_ssid, use_key);
 
 		g_lastWifiSSID = use_ssid;
@@ -674,7 +674,7 @@ void LeifSetupBegin()
 	while(IsLeifSetupBeginDone())
 	{
 		delay(500);
-		csprintf("LeifSetupBegin() called twice\n");
+		csprintf(PSTR("LeifSetupBegin() called twice\n"));
 	}
 
 	bLeifSetupBeginDone = true;
@@ -703,10 +703,10 @@ void LeifSetupBegin()
 
 	WiFi.mode(WIFI_STA);
 
-	csprintf("WiFi: %s\n", LeifGetAllowWifiConnection()?"ENABLED":"DISABLED");
-	csprintf("Using WiFi SSID: %s\n", wifi_ssid);
-	csprintf("MAC address: %s\n", WiFi.macAddress().c_str());
-	csprintf("Host name: %s\n", GetHostName());
+	csprintf(PSTR("WiFi: %s\n"), LeifGetAllowWifiConnection()?PSTR("ENABLED"):PSTR("DISABLED"));
+	csprintf(PSTR("Using WiFi SSID: %s\n"), wifi_ssid);
+	csprintf(PSTR("MAC address: %s\n"), WiFi.macAddress().c_str());
+	csprintf(PSTR("Host name: %s\n"), GetHostName());
 
 #if defined(ARDUINO_ARCH_ESP32)
 #ifndef NO_OTA
@@ -719,7 +719,7 @@ void LeifSetupBegin()
 	ArduinoOTA.setHostname(GetHostName());
 	ArduinoOTA.onStart([]()   // switch off all the PWMs during upgrade
 	{
-		csprintf("OTA update starting\n");
+		csprintf(PSTR("OTA update starting\n"));
 		if(iStatusLedPin >= 0)
 		{
 			pinMode(iStatusLedPin, OUTPUT);
@@ -755,7 +755,7 @@ void LeifSetupBegin()
 	ArduinoOTA.onEnd([]()   // do a fancy thing with our board led at end
 	{
 
-		csprintf("OTA update done\n");
+		csprintf(PSTR("OTA update done\n"));
 		DoOnShutdownCallback("OTA_DONE");
 
 #ifdef NO_FADE_LED
@@ -806,7 +806,7 @@ void LeifSetupBegin()
 		}
 #endif
 
-		csprintf("OTA update triggering restart\n");
+		csprintf(PSTR("OTA update triggering restart\n"));
 		delay(500);
 		ESP.restart();
 		delay(500);
@@ -821,7 +821,7 @@ void LeifSetupBegin()
 		else
 		{
 			DoOnShutdownCallback("OTA_FAILED");
-			csprintf("OTA update FAILED (%i)\n",error);
+			csprintf(PSTR("OTA update FAILED (%i)\n"),error);
 			ESP.restart();
 		}
 	});
@@ -829,13 +829,13 @@ void LeifSetupBegin()
 
 	telnet.begin();
 	telnet.setNoDelay(true);
-	csprintf("Telnet server started\n");
+	csprintf(PSTR("Telnet server started\n"));
 
 	server.on("/ping", []()
 	{
 		char ping_response[128];
-		sprintf(ping_response, "pong from %s", GetHostName());
-		server.send(200, "text/plain", ping_response);
+		sprintf(ping_response, PSTR("pong from %s"), GetHostName());
+		server.send(200, PSTR("text/plain"), ping_response);
 	});
 
 	server.on("/sysinfo", []()
@@ -863,9 +863,9 @@ void LeifSetupBegin()
 		FlashMode_t ideMode = ESP.getFlashChipMode();
 
 #if defined(ARDUINO_ARCH_ESP8266)
-		sprintf(temp, "SOC..............: ESP8266\n");
+		sprintf(temp, PSTR("SOC..............: ESP8266\n"));
 		s += temp;
-		sprintf(temp, "SDK..............: %s, %s\n",ARDUINO_ESP8266_RELEASE,ESP.getSdkVersion());
+		sprintf(temp, PSTR("SDK..............: %s, %s\n"),ARDUINO_ESP8266_RELEASE,ESP.getSdkVersion());
 		s += temp;
 #endif
 
@@ -888,7 +888,7 @@ void LeifSetupBegin()
 #endif
 
 
-		sprintf(temp, "Clock Freq.......: %.01f MHz\n", cpu_freq_khz / 1000.0f);
+		sprintf(temp, PSTR("Clock Freq.......: %.01f MHz\n"), cpu_freq_khz / 1000.0f);
 		s += temp;
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -901,21 +901,21 @@ void LeifSetupBegin()
 #endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
-		sprintf(temp, "Flash real id....: %08X\n", ESP.getFlashChipId());
+		sprintf(temp, PSTR("Flash real id....: %08X\n"), ESP.getFlashChipId());
 		s += temp;
-		sprintf(temp, "Flash real size..: %u bytes\n\n", ESP.getFlashChipRealSize());
+		sprintf(temp, PSTR("Flash real size..: %u bytes\n\n"), ESP.getFlashChipRealSize());
 		s += temp;
 
-		sprintf(temp, "Flash ide size...: %u bytes\n", ideSize);
+		sprintf(temp, PSTR("Flash ide size...: %u bytes\n"), ideSize);
 		s += temp;
 #endif
 #if defined(ARDUINO_ARCH_ESP32)
 		sprintf(temp, "Flash size.......: %u bytes\n", ideSize);
 		s += temp;
 #endif
-		sprintf(temp, "Flash ide speed..: %u Hz\n", ESP.getFlashChipSpeed());
+		sprintf(temp, PSTR("Flash ide speed..: %u Hz\n"), ESP.getFlashChipSpeed());
 		s += temp;
-		sprintf(temp, "Flash ide mode...: %s\n\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
+		sprintf(temp, PSTR("Flash ide mode...: %s\n\n"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : PSTR("UNKNOWN")));
 		s += temp;
 
 #ifdef MMU_EXTERNAL_HEAP
@@ -926,14 +926,14 @@ void LeifSetupBegin()
 		sprintf(temp, "Heap free (IRAM).: %i\n", heapFreeIram);
 		s += temp;
 #endif
-		sprintf(temp, "Heap free (DRAM).: %i\n", heapFreeDram);
+		sprintf(temp, PSTR("Heap free (DRAM).: %i\n"), heapFreeDram);
 		s += temp;
 #if defined(ARDUINO_ARCH_ESP8266)
 #ifndef NO_MAX_FREE_BLOCKSIZE
-		sprintf(temp, "Heap max alloc...: %i\n", ESP.getMaxFreeBlockSize());
+		sprintf(temp, PSTR("Heap max alloc...: %i\n"), ESP.getMaxFreeBlockSize());
 		s += temp;
 #endif
-		sprintf(temp, "Heap frag........: %i\n", ESP.getHeapFragmentation());
+		sprintf(temp, PSTR("Heap frag........: %i\n"), ESP.getHeapFragmentation());
 		s += temp;
 #else
 		sprintf(temp, "Heap max alloc...: %i\n", ESP.getMaxAllocHeap());
@@ -944,20 +944,20 @@ void LeifSetupBegin()
 
 		if(strProjectName.length())
 		{
-			sprintf(temp, "Project..........: %s\n", strProjectName.c_str());
+			sprintf(temp, PSTR("Project..........: %s\n"), strProjectName.c_str());
 			s += temp;
 		}
 
 		if(pMqttLibrary)
 		{
-			sprintf(temp, "MQTT.............: %s\n", pMqttLibrary);
+			sprintf(temp, PSTR("MQTT.............: %s\n"), pMqttLibrary);
 			s += temp;
 		}
 
 
 
 
-		server.send(200, "text/plain", s);
+		server.send(200, PSTR("text/plain"), s);
 	});
 
 
@@ -989,7 +989,7 @@ void LeifSetupEnd()
 
 	if(strProjectName.length())
 	{
-		csprintf("Firmware: %s\n",strProjectName.c_str());
+		csprintf(PSTR("Firmware: %s\n"),strProjectName.c_str());
 	}
 
 }
@@ -1107,14 +1107,14 @@ void LeifSecondsToUptimeString(String & string, unsigned long ulSeconds)
 		if(ulDays > 365)
 		{
 			char temp[32];
-			sprintf(temp, "%luy %lud", ulDays / 366, ulDays % 366);
+			sprintf(temp, PSTR("%luy %lud"), ulDays / 366, ulDays % 366);
 			string = temp;
 		}
 		else
 		{
 			unsigned long ulHours = (ulSeconds - (ulDays * 86400)) / 3600;
 			char temp[32];
-			sprintf(temp, "%lud %luh", ulDays, ulHours);
+			sprintf(temp, PSTR("%lud %luh"), ulDays, ulHours);
 			string = temp;
 		}
 	}
@@ -1123,7 +1123,7 @@ void LeifSecondsToUptimeString(String & string, unsigned long ulSeconds)
 		char temp[128];
 		if(ulDays == 0)
 		{
-			sprintf(temp, "%02lu:%02lu:%02lu",
+			sprintf(temp, PSTR("%02lu:%02lu:%02lu"),
 			(ulSeconds / 3600) % 24,
 			(ulSeconds / 60) % 60,
 			(ulSeconds) % 60
@@ -1131,7 +1131,7 @@ void LeifSecondsToUptimeString(String & string, unsigned long ulSeconds)
 		}
 		else
 		{
-			sprintf(temp, "%lud %02lu:%02lu:%02lu",
+			sprintf(temp, PSTR("%lud %02lu:%02lu:%02lu"),
 			(ulSeconds / 86400),
 			(ulSeconds / 3600) % 24,
 			(ulSeconds / 60) % 60,
@@ -1348,8 +1348,8 @@ void LeifLoop()
 				strWifiStatus = MyWiFiSTAClass::GetIsStatic() ? "*" : "";
 				strWifiStatus += WiFi.localIP().toString();
 
-				csprintf("IP: %s%s, SSID %s, BSSID %s, Ch %i\n", WiFi.localIP().toString().c_str(), MyWiFiSTAClass::GetIsStatic() ? " (static)" : " (DHCP)", WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(), WiFi.channel());
-				csprintf("Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
+				csprintf(PSTR("IP: %s%s, SSID %s, BSSID %s, Ch %i\n"), WiFi.localIP().toString().c_str(), MyWiFiSTAClass::GetIsStatic() ? " (static)" : " (DHCP)", WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(), WiFi.channel());
+				csprintf(PSTR("Gateway: %s\n"), WiFi.gatewayIP().toString().c_str());
 				iWifiConnAttempts = 0;
 				bAllowBSSID = true;
 				bNewWifiConnection = true;
@@ -1375,7 +1375,7 @@ void LeifLoop()
 				{
 					uint32_t period=(ulReconnectMs>>3);		//disconnect 1/8 of the delay period before reconnecting
 
-					csprintf("Force WiFi Disconnect %u ms ahead of reconnect!\n",period);
+					csprintf(PSTR("Force WiFi Disconnect %u ms ahead of reconnect!\n"),period);
 					WiFi.disconnect(false);
 
 					ulWifiReconnect = millis() - (ulReconnectMs - period);
@@ -1424,7 +1424,7 @@ void LeifLoop()
 		}
 		else
 		{
-			g_lastWifiSSID = "Disabled";
+			g_lastWifiSSID = PSTR("Disabled");
 			memset(g_lastBSSID, 0, 6);
 			g_lastWifiChannel = 0;
 			ulSecondCounterWiFi = 0;
@@ -1457,15 +1457,15 @@ void LeifLoop()
 				}
 				telnetprint.write((uint8_t *) "=========\n",10);
 				if(k>0) break;
-				telnetprint.printf("Welcome to %s, ip %s! Uptime: %s\n", GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str());
+				telnetprint.printf(PSTR("Welcome to %s, ip %s! Uptime: %s\n"), GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str());
 			}
 
 #ifndef NO_SERIAL_DEBUG
-			Serial.printf("New telnet connection from %s, uptime %s\n", telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
+			Serial.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
 #ifdef USE_SERIAL1_DEBUG
-			Serial1.printf("New telnet connection from %s, uptime %s\n", telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
+			Serial1.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
 			telnetprint.write((const uint8_t *) scrollbackBuffer.dataFirst(), scrollbackBuffer.sizeFirst());
@@ -1484,7 +1484,7 @@ void LeifLoop()
 		{
 			if(disconnectedClient == 0)
 			{
-				csprintf("Telnet client disconnected.\n");
+				csprintf(PSTR("Telnet client disconnected.\n"));
 				telnetClients.stop();
 				disconnectedClient = 1;
 			}
@@ -1600,7 +1600,7 @@ char szExtCompileDate[32] = {0};
 void LeifHtmlMainPageCommonHeader(String & string)
 {
 
-	string.concat("<table>");
+	string.concat(PSTR("<table>"));
 
 	if(fnHttpMainTableCallback)
 	{
@@ -1613,57 +1613,46 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	}
 
 
-	string.concat("<tr>");
+	string.concat(PSTR("<tr><td colspan=\"2\">"));
 
-	string.concat("<td colspan=\"2\">");
-
-	string.concat("Uptime: ");
+	string.concat(PSTR("Uptime: "));
 
 	String strUptime;
 	LeifUptimeString(strUptime);
 	string.concat(strUptime);
 
-	string.concat("</td>");
-
-	string.concat("<td colspan=\"2\">");
-	string.concat("Host: ");
+	string.concat(PSTR("</td><td colspan=\"2\">"));
+	string.concat(PSTR("Host: "));
 	string.concat(GetHostName());
-	string.concat("</td>");
 
-	string.concat("<td colspan=\"2\">");
+	string.concat(PSTR("</td><td colspan=\"2\">"));
 	if(MyWiFiSTAClass::GetIsStatic())
 	{
-		string.concat("<font color=\"green\">");
+		string.concat(PSTR("<font color=\"green\">"));
 	}
-	string.concat("IP: ");
+	string.concat(PSTR("IP: "));
 	string.concat(WiFi.localIP().toString());
 	if(MyWiFiSTAClass::GetIsStatic())
 	{
-		string.concat("</font>");
+		string.concat(PSTR("</font>"));
 	}
-	string.concat("</td>");
-
-	string.concat("</tr>");
+	string.concat(PSTR("</td></tr>"));
 
 	uint32_t heapFree = ESP.getFreeHeap();
 	String temp;
 
 
-	string.concat("<tr>");
-	string.concat("<td colspan=\"3\">");
-	string.concat("WiFi: ");
+	string.concat(PSTR("<tr><td colspan=\"3\">WiFi: "));
 	LeifSecondsToUptimeString(temp,ulSecondCounterWiFi);
 	string.concat(temp);
 
 	if(pMqttUptime)
 	{
-		string.concat(", MQTT: ");
+		string.concat(PSTR(", MQTT: "));
 		LeifSecondsToUptimeString(temp,*pMqttUptime);
 		string.concat(temp);
 	}
-	string.concat("</td>");
-	string.concat("<td colspan=\"3\">");
-	string.concat("Heap: ");
+	string.concat(PSTR("</td><td colspan=\"3\">Heap: "));
 
 	string.concat(heapFree);
 
@@ -1679,32 +1668,17 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat(")");
 #endif
 
-	string.concat("</td>");
-	string.concat("</tr>");
 
 
 
-
-	string.concat("<td colspan=\"3\">");
-	string.concat("Compile time: ");
+	string.concat(PSTR("</td></tr><td colspan=\"3\">Compile time: "));
 
 	string.concat(LeifGetCompileDate());
 
-	string.concat("</td>");
-
-	string.concat("<td colspan=\"3\">");
-	string.concat("MAC: ");
+	string.concat(PSTR("</td><td colspan=\"3\">MAC: "));
 	string.concat(WiFi.macAddress());
-	string.concat("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;");
-	string.concat("</td>");
-	string.concat("</tr>");
-
-	string.concat("<tr>");
-	string.concat("</tr>");
-
-	string.concat("<tr>");
-
-	string.concat("<td colspan=\"3\">");
+	string.concat(PSTR("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"));
+	string.concat(PSTR("</td></tr><tr></tr><tr><td colspan=\"\">"));
 
 	int bssid_color = 0;
 
@@ -1716,14 +1690,14 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	switch(bssid_color)
 	{
 	case -1:
-		string.concat("<font color=\"red\">");
+		string.concat(PSTR("<font color=\"red\">"));
 		break;
 	case 1:
-		string.concat("<font color=\"green\">");
+		string.concat(PSTR("<font color=\"green\">"));
 		break;
 	}
 
-	string.concat("BSSID: ");
+	string.concat(PSTR("BSSID: "));
 	string.concat(WiFi.BSSIDstr());
 
 	if(fnGetWiFiAPName)
@@ -1734,36 +1708,34 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	}
 
 
-	string.concat("&nbsp;&nbsp;&nbsp;CH: ");
+	string.concat(PSTR("&nbsp;&nbsp;&nbsp;CH: "));
 	string.concat(WiFi.channel());
 
 	if(bssid_color)
 	{
-		string.concat("</font>");
+		string.concat(PSTR("</font>"));
 	}
 
-	string.concat("</td>");
-	string.concat("<td colspan=\"3\">");
+	string.concat(PSTR("</td><td colspan=\"3\">"));
 
 	bool bWrongWifi = strcmp(wifi_ssid, WiFi.SSID().c_str());
 
 	if(bWrongWifi)
 	{
-		string.concat("<font color=\"red\">");
+		string.concat(PSTR("<font color=\"red\">"));
 	}
-	string.concat("SSID: ");
+	string.concat(PSTR("SSID: "));
 	string.concat(WiFi.SSID());
 	if(bWrongWifi)
 	{
-		string.concat("</font>");
+		string.concat(PSTR("</font>"));
 	}
 
-	string.concat("&nbsp;&nbsp;&nbsp;RSSI: ");
+	string.concat(PSTR("&nbsp;&nbsp;&nbsp;RSSI: "));
 	string.concat(WiFi.RSSI());
-	string.concat(" (max ");
+	string.concat(PSTR(" (max "));
 	string.concat(max_rssi);
-	string.concat(")</td>");
-	string.concat("</tr>");
+	string.concat(PSTR(")</td></tr>"));
 
 	if(fnHttpMainTableExtraCallback)
 	{
@@ -1775,10 +1747,7 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		fnHttpMainTableCallback(string, eHttpMainTable_AfterLastRow);
 	}
 
-	string.concat("</table>");
-
-
-	string.concat("<br>");
+	string.concat(PSTR("</table><br>"));
 
 
 }
@@ -2058,7 +2027,7 @@ void WiFiHealthMaintenance()
 	{
 		if(!LeifIsBSSIDConnection())
 		{	//but we're not, so disconnect.
-			csprintf("WiFi Health Maintenance: We're not on the correct BSSID connection. Disconnecting. (count: %i)\n",iHealthDisconnects);
+			csprintf(PSTR("WiFi Health Maintenance: We're not on the correct BSSID connection. Disconnecting. (count: %i)\n"),iHealthDisconnects);
 			bAllowBSSID=true;
 			bDoDisconnect=true;
 		}
@@ -2069,7 +2038,7 @@ void WiFiHealthMaintenance()
 
 		if((int16_t) avg_rssi < (int16_t) max_rssi-10)
 		{
-			csprintf("WiFi Health Maintenance: Current RSSI %i too low compared to max %i. Disconnecting. (count: %i)\n", avg_rssi, max_rssi,iHealthDisconnects);
+			csprintf(PSTR("WiFi Health Maintenance: Current RSSI %i too low compared to max %i. Disconnecting. (count: %i)\n"), avg_rssi, max_rssi,iHealthDisconnects);
 
 			if(max_rssi>-90)
 			{

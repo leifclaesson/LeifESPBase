@@ -11,7 +11,7 @@
 #include <ArduinoOTA.h>
 #endif
 
-#ifdef NO_GLOBAL_SERIAL
+#if defined(NO_GLOBAL_SERIAL) | defined(NO_GLOBAL_INSTANCES)
 #ifndef NO_SERIAL_DEBUG
 #define NO_SERIAL_DEBUG
 #endif
