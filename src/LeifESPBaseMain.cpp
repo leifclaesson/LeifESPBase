@@ -493,6 +493,10 @@ void LeifSetProjectName(const char * szProjectName)
 	strProjectName=szProjectName;
 }
 
+const String & LeifGetProjectName()
+{
+	return strProjectName;
+}
 
 
 class MyWiFiSTAClass:
@@ -633,7 +637,11 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 	}
 
 #ifndef NO_SERIAL_DEBUG
+#ifdef USE_SERIAL1_DEBUG
+	Serial1.begin(serial_debug_rate);
+#else
 	Serial.begin(serial_debug_rate);
+#endif
 #endif
 
 	scrollbackBuffer.alloc(_scrollback_bytes);
@@ -809,7 +817,7 @@ void LeifSetupBegin()
 		csprintf(PSTR("OTA update triggering restart\n"));
 		delay(500);
 		ESP.restart();
-		delay(500);
+		delay(2000);
 	});
 
 	ArduinoOTA.onError([](ota_error_t error)
@@ -1515,7 +1523,7 @@ void LeifLoop()
 				}
 
 #if defined(ARDUINO_ARCH_ESP32)
-				use = usLogTable256[(value>>7)+(value>>8)+64];
+				use = usLogTable256[(value>>7)+(value>>8)+48];
 #else
 				use = ((value >> 3) + 256);
 #endif

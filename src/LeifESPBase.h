@@ -85,8 +85,10 @@ const char * GetHostName();
 const char * GetHeadingText();
 
 #define LeifUpdateCompileTime() { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s",__DATE__,__TIME__); extern String strProjectName; strProjectName=__FILE__; }
+#define LeifUpdateCompileTime_VersionString(a) { extern char szExtCompileDate[]; sprintf(szExtCompileDate,"%s %s %s",__DATE__,__TIME__,a); extern String strProjectName; strProjectName=__FILE__; }
 
 void LeifSetProjectName(const char * szProjectName);
+const String & LeifGetProjectName();
 
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
