@@ -31,9 +31,14 @@ void LeifSetSoftAP(bool bEnable, const char * szPSK)
 
 		WiFi.mode((WiFiMode_t) desired_mode);
 
+
+
 		if(bEnable)
 		{
 
+#if defined(ARDUINO_ARCH_ESP32)
+			WiFi.softAP(GetHostName(), szPSK);
+#endif
 #if defined(ARDUINO_ARCH_ESP8266)
 			softap_config config;
 			if(wifi_softap_get_config_default(&config))

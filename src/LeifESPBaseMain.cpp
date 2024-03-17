@@ -37,7 +37,11 @@ unsigned short usLEDLogTable256[256] =
 #endif
 
 
+#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE //Serial used for USB CDC
+extern USBCDC Serial;
+#else
 extern HardwareSerial Serial;
+#endif
 
 
 #ifdef USE_SERIAL1_DEBUG
@@ -1506,46 +1510,73 @@ void LeifLoop()
 		{
 
 			uint16_t use;
-			if(IsWiFiConnected() || !bAllowConnect)
+
+			if(WiFi.getMode() & WIFI_AP)
 			{
-				static int counter = 0;
-				static int add = 250;
-				if(counter > 65536)
+
+				int time = ((millis() % 1100) * 768) / 1100;
+
+				int fadeval=time & 255;
+				if(fadeval > 127)
 				{
-					add = 50;
+					fadeval = 255 - fadeval;
 				}
-				counter += add;
-				int value = counter & 8191;
-				//int value=(millis() & 8191);
-				if(value > 4095)
-				{
-					value = 8191 - value;
-				}
+
+				if(time>=512) fadeval=0;
+
+				fadeval+=128;
 
 #if defined(ARDUINO_ARCH_ESP32)
-				use = usLEDLogTable256[(value>>7)+(value>>8)+48];
+				use = usLEDLogTable256[fadeval>>1];
 #else
-				use = ((value >> 3) + 256);
+				use = (fadeval << 1);
 #endif
-
-				if(!bAllowConnect)
-				{
-					use >>= 1;
-				}
 
 			}
 			else
 			{
-				int value = (millis() & 511);
-				if(value > 255)
+
+				if(IsWiFiConnected() || !bAllowConnect)
 				{
-					value = 511 - value;
+					static int counter = 0;
+					static int add = 250;
+					if(counter > 65536)
+					{
+						add = 50;
+					}
+					counter += add;
+					int value = counter & 8191;
+					//int value=(millis() & 8191);
+					if(value > 4095)
+					{
+						value = 8191 - value;
+					}
+
+	#if defined(ARDUINO_ARCH_ESP32)
+					use = usLEDLogTable256[(value>>7)+(value>>8)+48];
+	#else
+					use = ((value >> 3) + 256);
+	#endif
+
+					if(!bAllowConnect)
+					{
+						use >>= 1;
+					}
+
 				}
-#if defined(ARDUINO_ARCH_ESP32)
-				use = usLEDLogTable256[value>>1];
-#else
-				use = (value << 1);
-#endif
+				else
+				{
+					int value = (millis() & 511);
+					if(value > 255)
+					{
+						value = 511 - value;
+					}
+	#if defined(ARDUINO_ARCH_ESP32)
+					use = usLEDLogTable256[value>>1];
+	#else
+					use = (value << 1);
+	#endif
+				}
 			}
 
 			//if(Interval100()) csprintf("use %i\n",use);
