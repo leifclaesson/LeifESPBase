@@ -1536,7 +1536,7 @@ void LeifLoop()
 			else
 			{
 
-				if(IsWiFiConnected() || !bAllowConnect)
+				if(IsWiFiConnected() || !LeifGetAllowWifiConnection())
 				{
 					static int counter = 0;
 					static int add = 250;
@@ -1861,7 +1861,7 @@ void LeifSetAllowWifiConnection(bool bAllow)
 
 bool LeifGetAllowWifiConnection()
 {
-	return bAllowConnect;
+	return bAllowConnect && strlen(wifi_ssid);
 }
 
 bool IsLeifSetupBeginDone()

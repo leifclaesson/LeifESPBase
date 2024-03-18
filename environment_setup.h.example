@@ -1,4 +1,13 @@
 #pragma once
 
+#ifdef NO_DEFAULT_WIFI
+const char * wifi_ssid= "";
+const char * wifi_key=  "";
+#else
 const char * wifi_ssid = "your-SSID-goes-here";
 const char * wifi_key = "123456789";
+#endif
+
+const char * backup_ssid = NULL;
+const char * backup_key = NULL;
+
