@@ -18,6 +18,12 @@
 #endif
 
 
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+#include "..\ethernet_setup.h"
+#include <ETH.h>
+#endif
+
+
 #include "LeifESPBaseMain.h"
 #include "LeifESPBaseWOL.h"
 #include "LeifESPBaseAP.h"
@@ -131,6 +137,8 @@ bool LeifGetAllowSerialCommands();
 
 bool IsNewWifiConnection();	//returns true ONCE after a new wifi connection has been established
 
+bool IsWiFiConnected();
+
 void LeifSecondsToShortUptimeString(String & string,unsigned long ulSeconds);
 
 
@@ -166,4 +174,9 @@ String GetArgument(const String & input, const char * argname);
 
 bool LeifIsBSSIDConnection();	//returns true if we're connected an access point configured by BSSID+CH
 
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+bool HasEthernetIP();
+bool HasEthernetLink();
+#endif
 

@@ -102,6 +102,8 @@ static void onWiFiEvent(WiFiEvent_t event)
 #endif
 */
 
+
+
 bool IsWiFiConnected()
 {
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -989,6 +991,8 @@ void LeifSetupBegin()
 
 void LeifSetupEnd()
 {
+
+
 	server.begin();
 #ifndef NO_OTA
 	ArduinoOTA.begin();
@@ -1003,6 +1007,12 @@ void LeifSetupEnd()
 	{
 		csprintf(PSTR("Firmware: %s\n"),strProjectName.c_str());
 	}
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+	//WiFi.onEvent(WiFiEvent);
+	ETH.begin();
+	ETH.setHostname(GetHostName());
+#endif
 
 }
 
@@ -1045,6 +1055,21 @@ const uint32_t * pSecondsWiFi()
 {
 	return &ulSecondCounterWiFi;
 }
+
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+static uint32_t ulSecondCounterEthernet = 0;
+
+uint32_t secondsEthernet()
+{
+	return ulSecondCounterEthernet;
+}
+
+const uint32_t * pSecondsEthernet()
+{
+	return &ulSecondCounterEthernet;
+}
+#endif
 
 
 bool Interval50()
@@ -1287,6 +1312,17 @@ void LeifLoop()
 			ulSecondCounterWiFi = 0;
 			ulSecondCounterWiFiWatchdog++;
 		}
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+		if(ETH.localIP()!=0)
+		{
+			ulSecondCounterEthernet++;
+		}
+		else
+		{
+			ulSecondCounterEthernet = 0;
+		}
+#endif
 
 		WiFiWatchdog();
 
@@ -1651,8 +1687,7 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		fnHttpMainTableExtraCallback(string,eHttpMainTable_BeforeFirstRow);
 	}
 
-
-	string.concat(PSTR("<tr><td colspan=\"2\">"));
+	string.concat(PSTR("<tr><td colspan=\"1\">"));
 
 	string.concat(PSTR("Uptime: "));
 
@@ -1665,33 +1700,82 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat(GetHostName());
 
 	string.concat(PSTR("</td><td colspan=\"2\">"));
-	if(MyWiFiSTAClass::GetIsStatic())
+
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+	string.concat(PSTR("ETH: "));
+	if(ETH.linkUp())
 	{
-		string.concat(PSTR("<font color=\"green\">"));
+		if(ETH.localIP()!=0)
+		{
+			string.concat(ETH.localIP().toString());
+		}
+		else
+		{
+			string.concat(PSTR("Awaiting IP"));
+		}
 	}
-	string.concat(PSTR("IP: "));
-	string.concat(WiFi.localIP().toString());
-	if(MyWiFiSTAClass::GetIsStatic())
+	else
 	{
-		string.concat(PSTR("</font>"));
+		string.concat(PSTR("Down"));
 	}
-	string.concat(PSTR("</td></tr>"));
+#endif
+
+
+	if(LeifGetAllowWifiConnection())
+	{
+	#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+		string.concat(PSTR(", WiFi: "));
+	#else
+		string.concat(PSTR("IP: "));
+	#endif
+
+		if(MyWiFiSTAClass::GetIsStatic())
+		{
+			string.concat(PSTR("<font color=\"green\">"));
+		}
+		string.concat(WiFi.localIP().toString());
+		if(MyWiFiSTAClass::GetIsStatic())
+		{
+			string.concat(PSTR("</font>"));
+		}
+		string.concat(PSTR("</td>"));
+	}
+	string.concat(PSTR("</tr>"));
 
 	uint32_t heapFree = ESP.getFreeHeap();
 	String temp;
 
+	string.concat(PSTR("<tr><td colspan=\"3\">"));
 
-	string.concat(PSTR("<tr><td colspan=\"3\">WiFi: "));
-	LeifSecondsToUptimeString(temp,ulSecondCounterWiFi);
-	string.concat(temp);
-
-	if(pMqttUptime)
 	{
-		string.concat(PSTR(", MQTT: "));
-		LeifSecondsToUptimeString(temp,*pMqttUptime);
+		bool bFirst=true;
+
+	#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+		if(bFirst) bFirst=false; else string.concat(PSTR(", "));
+		string.concat(PSTR("ETH: "));
+		LeifSecondsToUptimeString(temp,ulSecondCounterEthernet);
 		string.concat(temp);
+	#endif
+
+		if(LeifGetAllowWifiConnection())
+		{
+			if(bFirst) bFirst=false; else string.concat(PSTR(", "));
+			string.concat(PSTR("WiFi: "));
+			LeifSecondsToUptimeString(temp,ulSecondCounterWiFi);
+			string.concat(temp);
+		}
+
+		if(pMqttUptime)
+		{
+			if(bFirst) bFirst=false; else string.concat(PSTR(", "));
+			string.concat(PSTR("MQTT: "));
+			LeifSecondsToUptimeString(temp,*pMqttUptime);
+			string.concat(temp);
+		}
 	}
-	string.concat(PSTR("</td><td colspan=\"3\">Heap: "));
+
+	string.concat(PSTR("</td><td colspan=\"2\">Heap: "));
 
 	string.concat(heapFree);
 
@@ -1709,72 +1793,109 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 
 
+	string.concat(PSTR("</td></tr>"));
 
-	string.concat(PSTR("</td></tr><td colspan=\"3\">Compile time: "));
+	/*
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+	string.concat(PSTR("<tr>"));
+	string.concat(PSTR("<td colspan=\"2\">ETH MAC: "));
+	string.concat(ETH.macAddress());
+	string.concat(PSTR("</td>"));
+	string.concat(PSTR("</tr>"));
+#endif
+*/
+
+	string.concat(PSTR("<tr><td colspan=\"2\">Compile time: "));
 
 	string.concat(LeifGetCompileDate());
 
-	string.concat(PSTR("</td><td colspan=\"3\">MAC: "));
-	string.concat(WiFi.macAddress());
-	string.concat(PSTR("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"));
-	string.concat(PSTR("</td></tr><tr></tr><tr><td colspan=\"\">"));
-
-	int bssid_color = 0;
-
-	if(iWifiChannel >= 0)
-	{
-		bssid_color = LeifIsBSSIDConnection() ? 1 : -1;
-	}
-
-	switch(bssid_color)
-	{
-	case -1:
-		string.concat(PSTR("<font color=\"red\">"));
-		break;
-	case 1:
-		string.concat(PSTR("<font color=\"green\">"));
-		break;
-	}
-
-	string.concat(PSTR("BSSID: "));
-	string.concat(WiFi.BSSIDstr());
-
-	if(fnGetWiFiAPName)
-	{
-		string.concat(" (");
-		string.concat(fnGetWiFiAPName(WiFi.BSSIDstr()));
-		string.concat(")");
-	}
-
-
-	string.concat(PSTR("&nbsp;&nbsp;&nbsp;CH: "));
-	string.concat(WiFi.channel());
-
-	if(bssid_color)
-	{
-		string.concat(PSTR("</font>"));
-	}
-
 	string.concat(PSTR("</td><td colspan=\"3\">"));
 
-	bool bWrongWifi = strcmp(wifi_ssid, WiFi.SSID().c_str());
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+	string.concat(PSTR("WiFi "));
+#endif
 
-	if(bWrongWifi)
+	if(LeifGetAllowWifiConnection())
 	{
-		string.concat(PSTR("<font color=\"red\">"));
+		string.concat(PSTR("MAC: "));
+
+		string.concat(WiFi.macAddress());
+		//string.concat(PSTR("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"));
+		string.concat(PSTR("</td>"));
 	}
-	string.concat(PSTR("SSID: "));
-	string.concat(WiFi.SSID());
-	if(bWrongWifi)
+	else
 	{
-		string.concat(PSTR("</font>"));
+		string.concat(PSTR("disabled"));
+	}
+	string.concat(PSTR("</tr>"));
+
+
+	if(LeifGetAllowWifiConnection())
+	{
+		string.concat(PSTR("<tr></tr><tr><td colspan=\"2\">"));
+
+		int bssid_color = 0;
+
+		if(iWifiChannel >= 0)
+		{
+			bssid_color = LeifIsBSSIDConnection() ? 1 : -1;
+		}
+
+		switch(bssid_color)
+		{
+		case -1:
+			string.concat(PSTR("<font color=\"red\">"));
+			break;
+		case 1:
+			string.concat(PSTR("<font color=\"green\">"));
+			break;
+		}
+
+		string.concat(PSTR("BSSID: "));
+		string.concat(WiFi.BSSIDstr());
+
+		if(fnGetWiFiAPName)
+		{
+			string.concat(" (");
+			string.concat(fnGetWiFiAPName(WiFi.BSSIDstr()));
+			string.concat(")");
+		}
+
+
+		string.concat(PSTR("&nbsp;&nbsp;&nbsp;CH: "));
+		string.concat(WiFi.channel());
+
+		if(bssid_color)
+		{
+			string.concat(PSTR("</font>"));
+		}
+
+		string.concat(PSTR("</td><td colspan=\"3\">"));
+
+		bool bWrongWifi = strcmp(wifi_ssid, WiFi.SSID().c_str());
+
+		if(bWrongWifi)
+		{
+			string.concat(PSTR("<font color=\"red\">"));
+		}
+		string.concat(PSTR("SSID: "));
+		string.concat(WiFi.SSID());
+		if(bWrongWifi)
+		{
+			string.concat(PSTR("</font>"));
+		}
+
+		string.concat(PSTR("&nbsp;&nbsp;&nbsp;RSSI: "));
+		string.concat(WiFi.RSSI());
+		string.concat(PSTR(" (max "));
+		string.concat(max_rssi);
+		string.concat(PSTR(")</td></tr>"));
 	}
 
-	string.concat(PSTR("&nbsp;&nbsp;&nbsp;RSSI: "));
-	string.concat(WiFi.RSSI());
-	string.concat(PSTR(" (max "));
-	string.concat(max_rssi);
-	string.concat(PSTR(")</td></tr>"));
+
+	//string.concat(PSTR("<tr><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td></tr>"));
+
+
 
 	if(fnHttpMainTableExtraCallback)
 	{
