@@ -48,6 +48,9 @@ extern HardwareSerial Serial;
 extern HardwareSerial Serial1;
 #endif
 
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+bool bEthernetInitialized=false;
+#endif
 
 /*
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -1010,11 +1013,25 @@ void LeifSetupEnd()
 
 #if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
 	//WiFi.onEvent(WiFiEvent);
-	ETH.begin();
+
+	#ifdef ETH_EXT_CLK
+	pinMode(16,OUTPUT);
+	digitalWrite(16,HIGH);
+	#endif
+
+	bEthernetInitialized=ETH.begin();
 	ETH.setHostname(GetHostName());
 #endif
 
 }
+
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+bool LeifIsEthernetInitialized()
+{
+	return bEthernetInitialized;
+}
+#endif
+
 
 unsigned long ulLastLoopMillis = 0;
 

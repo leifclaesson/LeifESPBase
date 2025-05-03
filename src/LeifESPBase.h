@@ -156,7 +156,16 @@ String LeifGetWifiStatus();
 uint32_t seconds();
 const uint32_t * pSeconds();
 
-uint32_t secondsWiFI();
+#if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
+
+uint32_t secondsEthernet();
+const uint32_t * pSecondsEthernet();
+
+bool LeifIsEthernetInitialized();
+
+#endif
+
+uint32_t secondsWiFi();
 const uint32_t * pSecondsWiFi();
 
 int HttpRequest(const char * url, int retries=3);
