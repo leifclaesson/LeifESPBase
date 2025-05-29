@@ -3,6 +3,14 @@
 #include <Arduino.h>
 #include <functional>
 
+#if defined(ARDUINO_ARCH_ESP8266)
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#else
+#include "WiFi.h"
+#include "WebServer.h"
+#endif
+
 enum eCommandLineSource
 {
 	eCommandLineSource_Telnet,
@@ -29,7 +37,6 @@ class String;
 typedef std::function<void(String &, eHttpMainTable)> LeifHttpMainTableCallback;
 void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb);
 
-class WiFiClient;
 class TelnetClientPrint : public Print
 {
 public:

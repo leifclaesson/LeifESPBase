@@ -2,13 +2,6 @@
 #include "LeifESPBase.h"
 
 
-#if defined(ARDUINO_ARCH_ESP8266)
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#else
-#include "WiFi.h"
-#include "WebServer.h"
-#endif
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
 bool bUpdatingOTA = false;
@@ -27,10 +20,13 @@ static unsigned long ulSecondCounterWiFiWatchdog = 0;
 
 #if defined(ARDUINO_ARCH_ESP32)
 
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+#include "esp_chip_info.h"
+#endif
+
 #include <esp_task_wdt.h>
 
 #include "core_version.h"
-
 
 unsigned short usLEDLogTable256[256] =
 {0, 0, 1, 1, 1, 2, 3, 3, 4, 5, 7, 8, 9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 31, 34, 37, 40, 43, 46, 50, 53, 57, 61, 65, 69, 73, 78, 82, 87, 91, 96, 101, 106, 111, 117, 122, 128, 134, 139, 145, 152, 158, 164, 171, 177, 184, 191, 198, 205, 212, 220, 227, 235, 242, 250, 258, 266, 275, 283, 292, 300, 309, 318, 327, 336, 345, 355, 364, 374, 383, 393, 403, 413, 424, 434, 445, 455, 466, 477, 488, 499, 510, 522, 533, 545, 557, 569, 581, 593, 605, 617, 630, 643, 655, 668, 681, 695, 708, 721, 735, 748, 762, 776, 790, 804, 819, 833, 848, 862, 877, 892, 907, 922, 938, 953, 969, 984, 1000, 1016, 1032, 1048, 1064, 1081, 1097, 1114, 1131, 1148, 1165, 1182, 1199, 1217, 1234, 1252, 1270, 1288, 1306, 1324, 1342, 1361, 1380, 1398, 1417, 1436, 1455, 1474, 1494, 1513, 1533, 1552, 1572, 1592, 1612, 1632, 1653, 1673, 1694, 1715, 1735, 1756, 1777, 1799, 1820, 1841, 1863, 1885, 1907, 1929, 1951, 1973, 1995, 2018, 2040, 2063, 2086, 2109, 2132, 2155, 2179, 2202, 2226, 2249, 2273, 2297, 2321, 2346, 2370, 2395, 2419, 2444, 2469, 2494, 2519, 2544, 2569, 2595, 2621, 2646, 2672, 2698, 2724, 2751, 2777, 2804, 2830, 2857, 2884, 2911, 2938, 2965, 2993, 3020, 3048, 3076, 3103, 3131, 3160, 3188, 3216, 3245, 3273, 3302, 3331, 3360, 3389, 3419, 3448, 3477, 3507, 3537, 3567, 3597, 3627, 3657, 3688, 3718, 3749, 3780, 3811, 3842, 3873, 3904, 3936, 3967, 3999, 4031, 4062, 4095};
@@ -507,7 +503,7 @@ const String & LeifGetProjectName()
 	return strProjectName;
 }
 
-
+/*
 class MyWiFiSTAClass:
 #if defined(ARDUINO_ARCH_ESP8266)
 	public ESP8266WiFiSTAClass
@@ -522,6 +518,7 @@ public:
 		return ((MyWiFiSTAClass *) mypointer)->_useStaticIp;
 	}
 };
+*/
 
 /*
 void onStationModeDisconnectedEvent(const WiFiEventStationModeDisconnected& evt)
@@ -568,7 +565,9 @@ void SetupWifiInternal()
 #endif
 	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)
+#if !defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR < 3
 	WiFi.setAutoConnect(false);
+#endif
 	WiFi.setAutoReconnect(false);
 
 	ResetRSSIHistory();
@@ -741,7 +740,11 @@ void LeifSetupBegin()
 		{
 			pinMode(iStatusLedPin, OUTPUT);
 #if defined(ARDUINO_ARCH_ESP32)
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 			ledcDetachPin(iStatusLedPin);
+#else
+			ledcDetach(iStatusLedPin);
+#endif
 			digitalWrite(iStatusLedPin, HIGH);
 #else
 			digitalWrite(iStatusLedPin, HIGH);
@@ -788,8 +791,12 @@ void LeifSetupBegin()
 #if defined(ARDUINO_ARCH_ESP32)
 		if(iStatusLedPin >= 0)
 		{
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 			ledcSetup(ucLedFadeChannel, 500, 12);
 			ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
+#else
+			ledcAttachChannel(iStatusLedPin,500, 12, ucLedFadeChannel);
+#endif
 		}
 #else
 		analogWriteRange(1023);
@@ -815,7 +822,11 @@ void LeifSetupBegin()
 		if(iStatusLedPin >= 0)
 		{
 #if defined(ARDUINO_ARCH_ESP32)
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 			ledcDetachPin(iStatusLedPin);
+#else
+			ledcDetach(iStatusLedPin);
+#endif
 			digitalWrite(iStatusLedPin, LOW);
 #else
 			digitalWrite(iStatusLedPin, HIGH);
@@ -982,8 +993,12 @@ void LeifSetupBegin()
 #ifndef NO_FADE_LED
 	if(bAllowLedFade)
 	{
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 		ledcSetup(ucLedFadeChannel, 500, 12);
 		ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
+#else
+		ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
+#endif
 
 	}
 #endif
@@ -1002,7 +1017,16 @@ void LeifSetupEnd()
 #endif
 
 #if defined(ARDUINO_ARCH_ESP32)
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 	esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+#else
+	esp_task_wdt_deinit();
+	esp_task_wdt_config_t cfg;
+	cfg.timeout_ms=WDT_TIMEOUT * 1000;
+	cfg.idle_core_mask=3;
+	cfg.trigger_panic=true;
+	esp_task_wdt_init(&cfg);
+#endif
 	esp_task_wdt_add(NULL); //add current thread to WDT watch
 #endif
 
@@ -1275,7 +1299,6 @@ void LeifLoop()
 #endif
 
 
-
 #ifdef USE_HOMIE
 	homie.Loop();
 #endif
@@ -1295,7 +1318,6 @@ void LeifLoop()
 	}
 
 
-
 	HandleCommandLine();
 
 
@@ -1304,7 +1326,6 @@ void LeifLoop()
 		ulLastLoopSecond += 1000;
 		bInterval1000 = true;
 		ulSecondCounter++;
-
 
 		static uint32_t last_cyclecount = 0;
 		static uint32_t last_cc_millis = 0;
@@ -1331,8 +1352,13 @@ void LeifLoop()
 		}
 
 #if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
-		if(ETH.localIP()!=0)
+		uint32_t _eth_ip=ETH.localIP();
+		if(_eth_ip!=0)
 		{
+			if(!ulSecondCounterEthernet)
+			{
+				csprintf(PSTR("Ethernet IP: %s\n"), ETH.localIP().toString().c_str());
+			}
 			ulSecondCounterEthernet++;
 		}
 		else
@@ -1350,7 +1376,6 @@ void LeifLoop()
 #endif
 
 
-
 	}
 	else
 	{
@@ -1365,7 +1390,6 @@ void LeifLoop()
 	{
 		bInterval10s = false;
 	}
-
 
 	if((int)(ulLastLoopMillis - ulLastLoopHalfSecond) >= 500)
 	{
@@ -1400,7 +1424,6 @@ void LeifLoop()
 		bInterval100 = false;
 	}
 
-
 	if(WiFi.getMode() & WIFI_STA)
 	{
 
@@ -1410,10 +1433,10 @@ void LeifLoop()
 			if(!bIpPrinted)
 			{
 				bIpPrinted = true;
-				strWifiStatus = MyWiFiSTAClass::GetIsStatic() ? "*" : "";
+				strWifiStatus = /*MyWiFiSTAClass::GetIsStatic() ? "*" : */"";
 				strWifiStatus += WiFi.localIP().toString();
 
-				csprintf(PSTR("IP: %s%s, SSID %s, BSSID %s, Ch %i, RSSI %i\n"), WiFi.localIP().toString().c_str(), MyWiFiSTAClass::GetIsStatic() ? " (static)" : " (DHCP)", WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(), WiFi.channel(), WiFi.RSSI());
+				csprintf(PSTR("IP: %s, SSID %s, BSSID %s, Ch %i, RSSI %i\n"), WiFi.localIP().toString().c_str(), /*MyWiFiSTAClass::GetIsStatic() ? " (static)" : " (DHCP)", */WiFi.SSID().c_str(), WiFi.BSSIDstr().c_str(), WiFi.channel(), WiFi.RSSI());
 				csprintf(PSTR("Gateway: %s\n"), WiFi.gatewayIP().toString().c_str());
 				iWifiConnAttempts = 0;
 				bAllowBSSID = true;
@@ -1723,7 +1746,8 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	string.concat(PSTR("ETH: "));
 	if(ETH.linkUp())
 	{
-		if(ETH.localIP()!=0)
+		uint32_t _eth_ip=ETH.localIP();
+		if(_eth_ip!=0)
 		{
 			string.concat(ETH.localIP().toString());
 		}
@@ -1747,15 +1771,15 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		string.concat(PSTR("IP: "));
 	#endif
 
-		if(MyWiFiSTAClass::GetIsStatic())
+/*		if(MyWiFiSTAClass::GetIsStatic())
 		{
 			string.concat(PSTR("<font color=\"green\">"));
-		}
+		}*/
 		string.concat(WiFi.localIP().toString());
-		if(MyWiFiSTAClass::GetIsStatic())
+/*		if(MyWiFiSTAClass::GetIsStatic())
 		{
 			string.concat(PSTR("</font>"));
-		}
+		}*/
 		string.concat(PSTR("</td>"));
 	}
 	string.concat(PSTR("</tr>"));
