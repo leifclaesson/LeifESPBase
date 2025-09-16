@@ -151,6 +151,9 @@ String LeifGetVersionText();
 
 void LeifSetVersionText(const char * szVersion);
 
+typedef std::function<void(void)> fn_LeifESPBaseInterimCallback;
+void LeifSetInterimCallback(fn_LeifESPBaseInterimCallback cb);	//this function will get called periodically during lengthy operations such as sending the telnet scrollback buffer
+
 String LeifGetWifiStatus();
 
 uint32_t seconds();

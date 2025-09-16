@@ -134,6 +134,24 @@ int LeifGetStatusLedPin()
 }
 
 
+typedef std::function<void(void)> fn_LeifESPBaseInterimCallback;
+
+static fn_LeifESPBaseInterimCallback fnInterimCallback;
+
+void LeifSetInterimCallback(fn_LeifESPBaseInterimCallback cb)
+{
+	fnInterimCallback=cb;
+}
+
+static void DoInterimCallback()
+{
+	if(fnInterimCallback)
+	{
+		fnInterimCallback();
+	}
+}
+
+
 #if defined(ARDUINO_ARCH_ESP8266)
 ESP8266WebServer server(80);
 #else
@@ -302,6 +320,12 @@ size_t TelnetClientPrint::write(const uint8_t *buffer, size_t size)
 			pDest->write((const uint8_t *) &buffer[begin],i-begin+add);
 			if(bLastCharNewLine) pDest->write((const uint8_t *) "\r\n",2);
 			begin=i+1;
+		}
+		cbcounter++;
+		if(cbcounter>127)
+		{
+			cbcounter=0;
+			DoInterimCallback();
 		}
 
 	}
@@ -575,7 +599,9 @@ void SetupWifiInternal()
 
 	if(iWifiChannel >= 0 && bAllowBSSID)
 	{
+
 		csprintf(PSTR("WiFi attempting to connect to %s at BSSID %s, Ch %i (attempt %i)...\n"), wifi_ssid, MacToString(cBSSID).c_str(), iWifiChannel, iWifiConnAttempts);
+
 		WiFi.begin(wifi_ssid, wifi_key, iWifiChannel, cBSSID, true);
 
 		g_lastWifiSSID = wifi_ssid;
@@ -695,6 +721,10 @@ void LeifSetupBegin()
 
 	bLeifSetupBeginDone = true;
 
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+	esp_log_level_set("*", ESP_LOG_NONE);
+#endif
+
 	LeifSetupConsole();
 
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -811,7 +841,11 @@ void LeifSetupBegin()
 				float temp = 1.0f - (value * 0.001f);
 				temp *= temp;
 				value = temp * 4095.0f;
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 				ledcWrite(ucLedFadeChannel, value);
+#else
+				ledcWrite(iStatusLedPin, value);
+#endif
 #else
 				int value = (i * 200) % 1001;
 				analogWrite(iStatusLedPin, value);
@@ -996,8 +1030,12 @@ void LeifSetupBegin()
 #if ESP_ARDUINO_VERSION_MAJOR < 3
 		ledcSetup(ucLedFadeChannel, 500, 12);
 		ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
+
 #else
-		ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
+
+		//bool ret=ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
+		bool ret=ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
+		//csprintf("ATTACH CHANNEL %i, led pin %i.   ret=%i\n",ucLedFadeChannel,iStatusLedPin,ret);
 #endif
 
 	}
@@ -1535,10 +1573,10 @@ void LeifLoop()
 			String strUptime;
 			LeifUptimeString(strUptime);
 
-
 			telnetprint.printf("\n");
 			for(int k=0;k<2;k++)
 			{
+				DoInterimCallback();
 				for(int i=0;i<7;i++)
 				{
 					telnetprint.write((uint8_t *) "==========",10);
@@ -1668,8 +1706,14 @@ void LeifLoop()
 
 
 #if defined(ARDUINO_ARCH_ESP32)
+
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 			ledcWrite(ucLedFadeChannel, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
+#else
+			ledcWrite(iStatusLedPin, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
+#endif
 			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
+			//if(Interval250()) csprintf("channel=%i  value=%i\n",ucLedFadeChannel,bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
 #else
 			analogWrite(iStatusLedPin, bInvertLedBlink ? use : ((1 << iAnalogWriteBits) - 1) - use);
 

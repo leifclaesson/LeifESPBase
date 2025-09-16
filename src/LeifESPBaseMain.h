@@ -47,6 +47,8 @@ public:
 
 	WiFiClient * pDest;
 
+	uint32_t cbcounter=0;
+
     size_t dbg(const uint8_t *buffer, size_t size);
 
 	size_t write(uint8_t value) override;
