@@ -1,11 +1,14 @@
 #include "LeifESPBaseMain.h"
 #include "LeifESPBase.h"
 
+#include <Arduino.h>
 
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
 bool bUpdatingOTA = false;
 #endif
+
+
 
 #include "..\environment_setup.h"
 
@@ -101,6 +104,12 @@ static void onWiFiEvent(WiFiEvent_t event)
 #endif
 */
 
+void DisableSerialLogging()
+{
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+	esp_log_level_set("*", ESP_LOG_NONE);
+#endif
+}
 
 
 bool IsWiFiConnected()
@@ -589,7 +598,7 @@ void SetupWifiInternal()
 #endif
 	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)
-#if !defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR < 3
+#if !defined(ARDUINO_ARCH_ESP32) || ESP_ARDUINO_VERSION_MAJOR < 3
 	WiFi.setAutoConnect(false);
 #endif
 	WiFi.setAutoReconnect(false);
@@ -670,6 +679,8 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 		return;
 	}
 
+	DisableSerialLogging();
+
 #ifndef NO_SERIAL_DEBUG
 #ifdef USE_SERIAL1_DEBUG
 	Serial1.begin(serial_debug_rate);
@@ -721,9 +732,7 @@ void LeifSetupBegin()
 
 	bLeifSetupBeginDone = true;
 
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-	esp_log_level_set("*", ESP_LOG_NONE);
-#endif
+	DisableSerialLogging();
 
 	LeifSetupConsole();
 
