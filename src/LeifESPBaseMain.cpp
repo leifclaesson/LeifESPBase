@@ -262,6 +262,9 @@ size_t ScrollbackBuffer::sizeSecond()
 
 ScrollbackBuffer scrollbackBuffer;
 
+bool bLedOverride=false;
+int iLedOverride=0;
+
 
 bool g_bAllowSerialCommands=true;
 void LeifSetAllowSerialCommands(bool bAllow)
@@ -1305,6 +1308,159 @@ void LeifScheduleReconnect(uint32_t ms)
 	ulReconnectTimestamp=millis()+ms;
 }
 
+
+void LeifUpdateStatusLED()
+{
+	if(iStatusLedPin >= 0 && bAllowLedWrite)
+	{
+#ifndef NO_FADE_LED
+		if(bAllowLedFade)
+		{
+
+			uint16_t use;
+
+			if(WiFi.getMode() & WIFI_AP)
+			{
+
+				int time = ((millis() % 1100) * 768) / 1100;
+
+				int fadeval=time & 255;
+				if(fadeval > 127)
+				{
+					fadeval = 255 - fadeval;
+				}
+
+				if(time>=512) fadeval=0;
+
+				fadeval+=128;
+
+#if defined(ARDUINO_ARCH_ESP32)
+				use = usLEDLogTable256[fadeval>>1];
+#else
+				use = (fadeval << 1);
+#endif
+
+			}
+			else
+			{
+
+				if(IsWiFiConnected() || !LeifGetAllowWifiConnection())
+				{
+					static int counter = 0;
+					static int add = 250;
+					if(counter > 65536)
+					{
+						add = 50;
+					}
+					counter += add;
+					int value = counter & 8191;
+					//int value=(millis() & 8191);
+					if(value > 4095)
+					{
+						value = 8191 - value;
+					}
+
+	#if defined(ARDUINO_ARCH_ESP32)
+					use = usLEDLogTable256[(value>>7)+(value>>8)+48];
+	#else
+					use = ((value >> 3) + 256);
+	#endif
+
+					if(!bAllowConnect)
+					{
+						use >>= 1;
+					}
+
+				}
+				else
+				{
+					int value = (millis() & 511);
+					if(value > 255)
+					{
+						value = 511 - value;
+					}
+	#if defined(ARDUINO_ARCH_ESP32)
+					use = usLEDLogTable256[value>>1];
+	#else
+					use = (value << 1);
+	#endif
+				}
+			}
+
+			//if(Interval100()) csprintf("use %i\n",use);
+
+			if(iAnalogWriteBits < iLedBrightnessScale)
+			{
+				use >>= (iLedBrightnessScale - iAnalogWriteBits);
+			}
+			else if(iAnalogWriteBits > iLedBrightnessScale)
+			{
+				use <<= (iAnalogWriteBits - iLedBrightnessScale);
+			}
+
+			if(bLedOverride)
+			{
+				use=iLedOverride;
+			}
+
+
+#if defined(ARDUINO_ARCH_ESP32)
+
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+			ledcWrite(ucLedFadeChannel, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
+#else
+			ledcWrite(iStatusLedPin, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
+#endif
+			//if(Interval100()) csprintf("use %i\n",use);
+			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
+			//if(Interval250()) csprintf("channel=%i  value=%i\n",ucLedFadeChannel,bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
+#else
+			analogWrite(iStatusLedPin, bInvertLedBlink ? use : ((1 << iAnalogWriteBits) - 1) - use);
+
+			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
+#endif
+
+		}
+		else
+#endif
+		{
+			int interval = 15000;
+			if(!IsWiFiConnected())
+			{
+				interval = 500;
+			}
+
+			unsigned long thresh = 100;
+			if(bInvertLedBlink)
+			{
+				thresh = 50;
+			}
+
+			bool bBlink = (millis() % interval) < thresh ? false : true;
+
+#if defined(ARDUINO_ARCH_ESP8266)
+			bBlink ^= true;
+#endif
+
+			bBlink ^= bInvertLedBlink;
+
+			digitalWrite(iStatusLedPin, bBlink);
+		}
+
+	}
+
+}
+
+void LeifSetStatusLED_Override(bool override_enable, int value)
+{
+	bLedOverride=override_enable;
+	iLedOverride=value;
+	LeifUpdateStatusLED();
+}
+
+
+
+
 void LeifLoop()
 {
 
@@ -1626,137 +1782,7 @@ void LeifLoop()
 		}
 	}
 
-	if(iStatusLedPin >= 0 && bAllowLedWrite)
-	{
-#ifndef NO_FADE_LED
-		if(bAllowLedFade)
-		{
-
-			uint16_t use;
-
-			if(WiFi.getMode() & WIFI_AP)
-			{
-
-				int time = ((millis() % 1100) * 768) / 1100;
-
-				int fadeval=time & 255;
-				if(fadeval > 127)
-				{
-					fadeval = 255 - fadeval;
-				}
-
-				if(time>=512) fadeval=0;
-
-				fadeval+=128;
-
-#if defined(ARDUINO_ARCH_ESP32)
-				use = usLEDLogTable256[fadeval>>1];
-#else
-				use = (fadeval << 1);
-#endif
-
-			}
-			else
-			{
-
-				if(IsWiFiConnected() || !LeifGetAllowWifiConnection())
-				{
-					static int counter = 0;
-					static int add = 250;
-					if(counter > 65536)
-					{
-						add = 50;
-					}
-					counter += add;
-					int value = counter & 8191;
-					//int value=(millis() & 8191);
-					if(value > 4095)
-					{
-						value = 8191 - value;
-					}
-
-	#if defined(ARDUINO_ARCH_ESP32)
-					use = usLEDLogTable256[(value>>7)+(value>>8)+48];
-	#else
-					use = ((value >> 3) + 256);
-	#endif
-
-					if(!bAllowConnect)
-					{
-						use >>= 1;
-					}
-
-				}
-				else
-				{
-					int value = (millis() & 511);
-					if(value > 255)
-					{
-						value = 511 - value;
-					}
-	#if defined(ARDUINO_ARCH_ESP32)
-					use = usLEDLogTable256[value>>1];
-	#else
-					use = (value << 1);
-	#endif
-				}
-			}
-
-			//if(Interval100()) csprintf("use %i\n",use);
-
-			if(iAnalogWriteBits < iLedBrightnessScale)
-			{
-				use >>= (iLedBrightnessScale - iAnalogWriteBits);
-			}
-			else if(iAnalogWriteBits > iLedBrightnessScale)
-			{
-				use <<= (iAnalogWriteBits - iLedBrightnessScale);
-			}
-
-
-#if defined(ARDUINO_ARCH_ESP32)
-
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-			ledcWrite(ucLedFadeChannel, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
-#else
-			ledcWrite(iStatusLedPin, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
-#endif
-			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
-			//if(Interval250()) csprintf("channel=%i  value=%i\n",ucLedFadeChannel,bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
-#else
-			analogWrite(iStatusLedPin, bInvertLedBlink ? use : ((1 << iAnalogWriteBits) - 1) - use);
-
-			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?use:((1<<iAnalogWriteBits)-1)-use);
-#endif
-
-		}
-		else
-#endif
-		{
-			int interval = 15000;
-			if(!IsWiFiConnected())
-			{
-				interval = 500;
-			}
-
-			unsigned long thresh = 100;
-			if(bInvertLedBlink)
-			{
-				thresh = 50;
-			}
-
-			bool bBlink = (millis() % interval) < thresh ? false : true;
-
-#if defined(ARDUINO_ARCH_ESP8266)
-			bBlink ^= true;
-#endif
-
-			bBlink ^= bInvertLedBlink;
-
-			digitalWrite(iStatusLedPin, bBlink);
-		}
-
-	}
+	LeifUpdateStatusLED();
 
 }
 

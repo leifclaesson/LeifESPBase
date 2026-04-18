@@ -124,6 +124,8 @@ void LeifSetStatusLedPin(int iPin);	//-1 to disable
 void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits);
 void LeifSetLedBrightness(int scale);	//0-3, 1 is default
 
+void LeifSetStatusLED_Override(bool bOverride, int value);
+
 void LeifSetInvertLedBlink(bool bInvertLed);
 bool LeifGetInvertLedBlink();
 
