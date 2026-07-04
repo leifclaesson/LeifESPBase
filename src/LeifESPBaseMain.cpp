@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_system.h>		//esp_reset_reason()
+#endif
+
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
 bool bUpdatingOTA = false;
@@ -17,6 +21,30 @@ bool bUpdatingOTA = false;
 #endif
 
 uint32_t serial_debug_rate=115200;
+
+String LeifGetResetReasonString()
+{
+#if defined(ARDUINO_ARCH_ESP32)
+	switch(esp_reset_reason())
+	{
+		case ESP_RST_POWERON:	return F("POWERON");	//normal power-on / cold boot
+		case ESP_RST_EXT:		return F("EXT");		//reset via external pin (e.g. the STM8 watchdog pulling the ESP32 RESET line)
+		case ESP_RST_SW:		return F("SW");			//esp_restart() / ESP.restart()
+		case ESP_RST_PANIC:		return F("PANIC");		//exception / panic handler (crash)
+		case ESP_RST_INT_WDT:	return F("INT_WDT");	//interrupt watchdog
+		case ESP_RST_TASK_WDT:	return F("TASK_WDT");	//task watchdog
+		case ESP_RST_WDT:		return F("WDT");		//other watchdog
+		case ESP_RST_DEEPSLEEP:	return F("DEEPSLEEP");	//wake from deep sleep
+		case ESP_RST_BROWNOUT:	return F("BROWNOUT");	//brownout (supply sag) -> suspect PSU / bulk cap
+		case ESP_RST_SDIO:		return F("SDIO");
+		default:				return F("UNKNOWN");
+	}
+#elif defined(ARDUINO_ARCH_ESP8266)
+	return ESP.getResetReason();
+#else
+	return F("n/a");
+#endif
+}
 
 static unsigned long ulSecondCounterWiFiWatchdog = 0;
 
@@ -598,6 +626,7 @@ void SetupWifiInternal()
 	WiFi.hostname(GetHostName());
 #else
 	WiFi.setHostname(GetHostName());
+	WiFi.setSleep(false);	//ESP32: disable WiFi modem-sleep so MQTT keepalives don't drop on a marginal link (chronic flap fix)
 #endif
 	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)
@@ -964,6 +993,16 @@ void LeifSetupBegin()
 
 		sprintf(temp, PSTR("Clock Freq.......: %.01f MHz\n"), cpu_freq_khz / 1000.0f);
 		s += temp;
+
+		sprintf(temp, PSTR("Reset reason.....: %s\n"), LeifGetResetReasonString().c_str());
+		s += temp;
+
+		{
+			String strUptime;
+			LeifUptimeString(strUptime);
+			sprintf(temp, PSTR("Uptime...........: %s\n"), strUptime.c_str());
+			s += temp;
+		}
 
 #if defined(ARDUINO_ARCH_ESP32)
 
