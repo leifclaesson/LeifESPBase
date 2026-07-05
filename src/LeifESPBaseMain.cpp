@@ -788,6 +788,16 @@ void LeifSetupBegin()
 
 	ResetRSSIHistory();
 
+#if defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR >= 3
+	//esp32 core 3.x (IDF5): the STA hostname is latched into the netif at the WIFI_MODE_NULL->STA
+	//transition inside WiFi.mode() (WiFiGeneric.cpp: esp_netif_set_hostname(..., NetworkManager::getHostname())),
+	//reading the stored default_hostname at that instant. The later WiFi.setHostname() in SetupWifiInternal()
+	//only rewrites that buffer and never re-latches the live netif, so on 3.x the name must be set BEFORE
+	//mode(WIFI_STA) or the interface keeps the default esp32-XXXXXX. (1.0.6 applied it via the later call, so
+	//this is 3.x-only and the SetupWifiInternal() call stays for the 1.x path.)
+	WiFi.setHostname(GetHostName());
+#endif
+
 	WiFi.mode(WIFI_STA);
 
 	csprintf(PSTR("WiFi: %s\n"), LeifGetAllowWifiConnection()?PSTR("ENABLED"):PSTR("DISABLED"));
