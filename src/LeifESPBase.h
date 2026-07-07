@@ -99,6 +99,9 @@ const String & LeifGetProjectName();
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
 
+void LeifServiceBackground();	//pump background services (MQTT keepalive) around a long blocking op such as a web page render; no-op unless the linked MQTT lib registered a handler
+void LeifSetServiceBackgroundCallback(void (*fn)());	//called by the linked MQTT lib (lsm.Loop / homie.Loop) to register its pump
+
 void LeifSetupConsole(uint16_t _scrollback_bytes=0);	//can be called before LeifSetupBegin
 
 void LeifSetupBegin();

@@ -424,6 +424,28 @@ void LeifRegisterOnShutdownCallback(LeifOnShutdownCallback cb)
 }
 
 
+//Background-service hook. A long blocking operation that owns loop() -- typically a web
+//page render, where server.sendContent() does a BLOCKING WiFiClient::write() that can stall
+//for the client write timeout on a marginal link -- starves the MQTT keepalive, so the broker
+//drops us and on reconnect we reload (possibly wrong) retained state. Servicing right before
+//AND after each flush bounds the unserviced gap to a single write. Whichever MQTT lib is
+//linked registers its pump here (LeifESPBaseMQTT -> lsm.Loop, LeifESPBaseHomie -> homie.Loop);
+//those Loop()s self-throttle (~100ms) so calling this around every flush is cheap. No-op (safe)
+//for a project with no MQTT lib. Same shape as Lightbulb's FlushServiceMqtt / GateController's
+//FastPeriodic.
+static void (*fnServiceBackground)()=nullptr;
+
+void LeifSetServiceBackgroundCallback(void (*fn)())
+{
+	fnServiceBackground=fn;
+}
+
+void LeifServiceBackground()
+{
+	if(fnServiceBackground) fnServiceBackground();
+}
+
+
 LeifHttpMainTableCallback fnHttpMainTableCallback;
 
 void LeifSetHttpMainTableCallback(LeifHttpMainTableCallback cb)
