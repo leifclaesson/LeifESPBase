@@ -471,6 +471,7 @@ void DoOnShutdownCallback(const char * pszReason)
 uint8_t cBSSID[6] = {0, 0, 0, 0, 0, 0};
 int iWifiChannel = -1;
 bool bAllowBSSID = false;
+bool bBSSIDSessionOnly = false;	//true = the current BSSID pin was chosen at runtime and is NOT written to config (temporary); false = came from config (saved)
 
 int8_t rssi_history[8];
 int16_t rssi_sum;
@@ -557,6 +558,7 @@ void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP
 	{
 		bAllowBSSID = true;
 		iWifiChannel = ch;
+		bBSSIDSessionOnly = false;	//default: a pin set through here is treated as saved (config load). The runtime picker overrides via LeifSetBSSIDSessionOnly() for a temporary pick.
 		ipAccessPoint.fromString(pszAccessPointIP);
 	}
 	else
@@ -694,7 +696,45 @@ void SetupWifiInternal()
 		}
 
 		csprintf(PSTR("WiFi attempting to connect to %s (attempt %i)...\n"), use_ssid, iWifiConnAttempts);
+
+#if defined(ARDUINO_ARCH_ESP32)
+		//ESP32 default is WIFI_FAST_SCAN: it stops at the FIRST matching-SSID AP found in channel order and
+		//associates regardless of RSSI, so on a multi-AP roaming SSID it never picks the strongest. Force a
+		//full scan of every channel so the (default) by-signal sorter has all candidates and connects to the
+		//nearest AP. Only for the SSID-only path -- the BSSID-pinned branch above deliberately targets one AP.
+		WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+		WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 		WiFi.begin(use_ssid, use_key);
+#elif defined(ARDUINO_ARCH_ESP8266)
+		//ESP8266 has no scan/sort-method control (its SDK station_config exposes only an RSSI/authmode threshold)
+		//and its fast scan grabs the first matching AP, not the strongest. So do the equivalent in software: scan,
+		//pick the strongest BSSID for our SSID, and connect to that specific BSSID+channel. Falls back to a plain
+		//SSID connect if the scan turns up nothing (SSID hidden, or scan failed -> n<=0).
+		{
+			int best = -1;
+			int n = WiFi.scanNetworks();
+			for(int i = 0; i < n; i++)
+			{
+				if(WiFi.SSID(i) == use_ssid && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best)))
+				{
+					best = i;
+				}
+			}
+
+			if(best >= 0)
+			{
+				csprintf(PSTR("  strongest '%s': BSSID %s, Ch %i, RSSI %i\n"), use_ssid, WiFi.BSSIDstr(best).c_str(), WiFi.channel(best), WiFi.RSSI(best));
+				WiFi.begin(use_ssid, use_key, WiFi.channel(best), WiFi.BSSID(best));	//begin() copies the BSSID, so scanDelete() below is safe
+			}
+			else
+			{
+				WiFi.begin(use_ssid, use_key);
+			}
+			WiFi.scanDelete();	//free the ESP8266 scan-result heap
+		}
+#else
+		WiFi.begin(use_ssid, use_key);
+#endif
 
 		g_lastWifiSSID = use_ssid;
 		g_lastWifiPSK = wifi_key;
@@ -971,6 +1011,12 @@ void LeifSetupBegin()
 		char ping_response[128];
 		sprintf(ping_response, PSTR("pong from %s"), GetHostName());
 		server.send(200, PSTR("text/plain"), ping_response);
+	});
+
+	server.on("/wifireconnect", []()
+	{
+		server.send(200, PSTR("text/plain"), PSTR("Reconnecting WiFi -- re-scanning for the strongest AP. Reload /wifiscan in ~20s to see the new BSSID."));
+		LeifScheduleForceReconnect(1000);	//defer the disconnect so this response reaches the client first
 	});
 
 	server.on("/sysinfo", []()
@@ -1379,6 +1425,14 @@ void LeifScheduleReconnect(uint32_t ms)
 	ulReconnectTimestamp=millis()+ms;
 }
 
+static uint32_t ulForceReconnectTimestamp=0;
+
+void LeifScheduleForceReconnect(uint32_t ms)	//deferred LeifForceWifiReconnect(): lets a web handler flush its response BEFORE the association drops (same pattern as LeifScheduleRestart)
+{
+	ulForceReconnectTimestamp=millis()+ms;
+	if(!ulForceReconnectTimestamp) ulForceReconnectTimestamp=1;	//never let the "armed" sentinel land on 0
+}
+
 
 void LeifUpdateStatusLED()
 {
@@ -1589,6 +1643,12 @@ void LeifLoop()
 	{
 		ulReconnectTimestamp=0;
 		WiFi.disconnect(0);
+	}
+
+	if(ulForceReconnectTimestamp && (int32_t) (millis()-ulForceReconnectTimestamp)>0)
+	{
+		ulForceReconnectTimestamp=0;
+		LeifForceWifiReconnect();
 	}
 
 
@@ -2025,11 +2085,18 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	{
 		string.concat(PSTR("<tr></tr><tr><td colspan=\"2\">"));
 
-		int bssid_color = 0;
+		int bssid_color = 0;	//0=auto (no pin), 1=on saved pin (green), 2=on temporary pin (orange), -1=pinned but not on it (red)
 
 		if(iWifiChannel >= 0)
 		{
-			bssid_color = LeifIsBSSIDConnection() ? 1 : -1;
+			if(LeifIsBSSIDConnection())
+			{
+				bssid_color = LeifIsBSSIDSessionOnly() ? 2 : 1;
+			}
+			else
+			{
+				bssid_color = -1;
+			}
 		}
 
 		switch(bssid_color)
@@ -2039,6 +2106,9 @@ void LeifHtmlMainPageCommonHeader(String & string)
 			break;
 		case 1:
 			string.concat(PSTR("<font color=\"green\">"));
+			break;
+		case 2:
+			string.concat(PSTR("<font color=\"orange\">"));
 			break;
 		}
 
@@ -2055,6 +2125,15 @@ void LeifHtmlMainPageCommonHeader(String & string)
 
 		string.concat(PSTR("&nbsp;&nbsp;&nbsp;CH: "));
 		string.concat(WiFi.channel());
+
+		if(bssid_color == 1)
+		{
+			string.concat(PSTR("&nbsp;(saved)"));
+		}
+		else if(bssid_color == 2)
+		{
+			string.concat(PSTR("&nbsp;(temporary - not saved)"));
+		}
 
 		if(bssid_color)
 		{
@@ -2198,6 +2277,16 @@ String GetArgument(const String & input, const char * argname)
 		}
 	}
 	return "";
+}
+
+void LeifSetBSSIDSessionOnly(bool bSessionOnly)	//mark the current pin as temporary (runtime pick, not in config) or saved
+{
+	bBSSIDSessionOnly = bSessionOnly;
+}
+
+bool LeifIsBSSIDSessionOnly()	//true if the active BSSID pin is a temporary runtime pick (not written to config)
+{
+	return bBSSIDSessionOnly;
 }
 
 bool LeifIsBSSIDConnection()	//returns true if we're connected an access point configured by BSSID+CH
@@ -2385,6 +2474,13 @@ void WiFiHealthMaintenance()
 	}
 	else
 	{
+		//max_rssi health-maintenance DISABLED (2026-07-07). It disconnected an unpinned link whenever the 8-sample
+		//avg RSSI fell >10 dB below the best-ever seen this boot -- but that best-ever is a noisy high-water mark that
+		//never really resets, so a lone RSSI spike made it flap a perfectly healthy link every ~34 min, and it judged
+		//RSSI-vs-personal-best rather than actual link health. Its payoff also depended on the reconnect landing
+		//somewhere better, which only became true once the strongest-AP scan went in. Re-enable, or replace with an
+		//absolute floor / a real "is a stronger AP available right now?" roam check, if wanted.
+#if 0
 		int8_t avg_rssi=get_avg_rssi();
 
 		if((int16_t) avg_rssi < (int16_t) max_rssi-10)
@@ -2399,6 +2495,7 @@ void WiFiHealthMaintenance()
 
 			bDoDisconnect=true;
 		}
+#endif
 	}
 
 	if(bDoDisconnect)
@@ -2415,4 +2512,15 @@ void WiFiHealthMaintenance()
 	}
 
 
+}
+
+
+void LeifForceWifiReconnect()	//runtime "reconnect without reboot": just drop the association; the normal auto-reconnect
+{								//path re-associates via SetupWifiInternal -- for an unpinned device that's the strongest-AP scan
+								//(all-channel/by-signal on ESP32, software scan on ESP8266), for a pinned one the BSSID branch
+								//(LeifSetupBSSID already re-armed it). After a healthy connection the attempt/pin state is already
+								//clean and the ESP32 skip-ahead handles a fast retry, so a bare disconnect is all that's needed.
+								//(The max_rssi ceiling reset that used to live here went away with the max_rssi health-maint.)
+	csprintf(PSTR("Manual WiFi reconnect requested.\n"));
+	WiFi.disconnect(false);
 }

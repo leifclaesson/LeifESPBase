@@ -99,6 +99,8 @@ const String & LeifGetProjectName();
 void LeifSetupBSSID(const char * pszBSSID, int ch, const char * pszAccessPointIP);
 IPAddress LeifGetAccessPointIP();
 
+void LeifForceWifiReconnect();	//runtime "reconnect without reboot": re-scan all channels and associate to the strongest AP
+
 void LeifServiceBackground();	//pump background services (MQTT keepalive) around a long blocking op such as a web page render; no-op unless the linked MQTT lib registered a handler
 void LeifSetServiceBackgroundCallback(void (*fn)());	//called by the linked MQTT lib (lsm.Loop / homie.Loop) to register its pump
 
@@ -115,6 +117,7 @@ void LeifHtmlMainPageCommonHeader(String & string);
 
 void LeifScheduleRestart(uint32_t ms);
 void LeifScheduleReconnect(uint32_t ms);
+void LeifScheduleForceReconnect(uint32_t ms);	//deferred full reconnect (re-scan for strongest AP); safe to call from a web handler -- fires after the response flushes
 
 bool Interval50();
 bool Interval100();
@@ -191,6 +194,8 @@ String GetArgument(const String & input, const char * argname);
 
 
 bool LeifIsBSSIDConnection();	//returns true if we're connected an access point configured by BSSID+CH
+void LeifSetBSSIDSessionOnly(bool bSessionOnly);	//mark the active BSSID pin as temporary (runtime pick) vs saved (from config)
+bool LeifIsBSSIDSessionOnly();	//true if the active pin is a temporary runtime pick not written to config
 
 
 #if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
