@@ -5,6 +5,8 @@
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>		//esp_reset_reason()
+#include <esp_wifi.h>		//esp_wifi_set_country() -- regulatory domain so channel 13 is scannable/joinable
+#include <lwip/sockets.h>	//select()/fd_set for LeifWebServer's bounded non-blocking response write (below)
 #endif
 
 #ifndef NO_OTA
@@ -192,7 +194,75 @@ static void DoInterimCallback()
 #if defined(ARDUINO_ARCH_ESP8266)
 ESP8266WebServer server(80);
 #else
-WebServer server(80);
+LeifWebServer server(80);
+
+//LeifWebServer -- see the class note in LeifWebServer.h. The stock WebServer's every response
+//write funnels through _currentClientWrite / _currentClientWrite_P; we bound them so a stalled
+//socket write can't starve loopTask into a task-WDT reboot on a marginal link.
+#ifndef LEIFWEBSERVER_WRITE_BUDGET_MS
+#define LEIFWEBSERVER_WRITE_BUDGET_MS 1000	//per-chunk stall budget; a write that can't progress within this stop()s the client
+#endif
+
+size_t LeifWebServer::_currentClientWrite(const char *b, size_t l)
+{
+	return BoundedClientWrite(b, l, false);
+}
+
+size_t LeifWebServer::_currentClientWrite_P(PGM_P b, size_t l)
+{
+	return BoundedClientWrite(b, l, true);
+}
+
+size_t LeifWebServer::BoundedClientWrite(const char *b, size_t l, bool progmem)
+{
+	if(!_currentClient.connected())
+	{
+		return 0;
+	}
+
+	int sockfd=_currentClient.fd();
+	if(sockfd<0)
+	{
+		return 0;
+	}
+
+	size_t written=0;
+	const size_t chunk_max=1436;	//1 esp32 TCP_MSS: select reports writable at >=1 MSS free, so a <=1 MSS write is taken in one shot -> the write() call itself can't loop-block
+
+	while(written<l)
+	{
+		size_t n=l-written;
+		if(n>chunk_max)
+		{
+			n=chunk_max;
+		}
+
+		//Wait (bounded) for the socket to accept bytes. Healthy link -> select returns writable
+		//immediately -> byte-identical to the stock write. Stalled link -> we give up after the
+		//budget and stop() the client, so this request errors instead of starving loopTask; the
+		//remaining writes in this render then return 0 instantly (write() checks _connected).
+		fd_set setWrite;
+		FD_ZERO(&setWrite);
+		FD_SET(sockfd,&setWrite);
+		struct timeval tv={ LEIFWEBSERVER_WRITE_BUDGET_MS/1000, (LEIFWEBSERVER_WRITE_BUDGET_MS%1000)*1000 };
+		int r=select(sockfd+1,nullptr,&setWrite,nullptr,&tv);
+		if(!(r>0 && FD_ISSET(sockfd,&setWrite)))
+		{
+			_currentClient.stop();	//stall past budget -> error the request, keep the box up
+			return written;
+		}
+
+		size_t w = progmem ? _currentClient.write_P(b+written,n) : _currentClient.write((const uint8_t *)(b+written),n);
+		if(!w)
+		{
+			_currentClient.stop();
+			return written;
+		}
+		written+=w;
+	}
+
+	return written;
+}
 #endif
 
 void ScrollbackBuffer::alloc(uint16_t bytes)
@@ -389,6 +459,15 @@ String strSerialCmdBuffer;
 #if defined(WIFI_RECONNECT)
 unsigned long ulWifiReconnect = millis() - 15000;
 int iWifiConnAttempts = 0;
+
+// --- non-blocking strongest-AP scan state (software-scan platforms: ESP8266 + ESP32 core 1.0.x) ---
+// The old code blocked loop() ~2s on WiFi.scanNetworks(); unacceptable in a base class that drives real
+// hardware. Instead the scan runs asynchronously across loop() passes -- kicked in SetupWifiInternal(),
+// completed by its Phase-2 block on a later pass. See SetupWifiInternal() and the WiFi reconnect caller.
+static bool g_bWifiScanPending = false;			// an async WiFi.scanNetworks() is in flight for a reconnect
+static const char * g_pendWifiSsid = nullptr;	// SSID captured at scan-kick, consumed when the scan completes
+static const char * g_pendWifiKey  = nullptr;	// key   captured at scan-kick
+static uint32_t g_ulWifiScanKickMs = 0;			// millis() at kick, for the stuck-scan safety timeout
 uint32_t ulWifiTotalConnAttempts = 0;
 #endif
 
@@ -397,6 +476,12 @@ LeifGetWiFiAPName fnGetWiFiAPName;
 void LeifRegisterGetWiFiAPName(LeifGetWiFiAPName fn)
 {
 	fnGetWiFiAPName=fn;
+}
+
+LeifWifiScanPersistAvailable fnWifiScanPersistAvailable;
+void LeifRegisterWifiScanPersistAvailable(LeifWifiScanPersistAvailable fn)
+{
+	fnWifiScanPersistAvailable=fn;
 }
 
 static std::vector<LeifCommandCallback> vecOnCommand;
@@ -644,8 +729,47 @@ void ResetRSSIHistory()
 	rssi_history_idx=0;
 }
 
-void SetupWifiInternal()
+// Returns true if a connection attempt (WiFi.begin) was issued this call -> caller counts it as an attempt.
+// Returns false only on the software-scan platforms when it kicked an async scan and is waiting on results;
+// the caller then polls SetupWifiInternal() again next loop until it returns true.
+bool SetupWifiInternal()
 {
+	// --- Phase 2: an async strongest-AP scan kicked on an earlier pass is completing. -----------------
+	// (Software-scan platforms only -- g_bWifiScanPending is never set elsewhere. Runs BEFORE the one-time
+	//  per-attempt setup below so that setup happens once at kick, not on every poll.)
+	if(g_bWifiScanPending)
+	{
+		int n = WiFi.scanComplete();		// >=0 = AP count ready; -1 = still running; -2 = failed/none
+		if(n == -1 && (millis() - g_ulWifiScanKickMs) < 8000)
+		{
+			return false;					// still scanning within the timeout budget -- poll again next loop
+		}
+
+		int best = -1;
+		for(int i = 0; i < n; i++)			// n<0 (failed / timed out) -> body skipped, best stays -1
+		{
+			if(WiFi.SSID(i) == g_pendWifiSsid && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best)))
+			{
+				best = i;
+			}
+		}
+
+		if(best >= 0)
+		{
+			csprintf(PSTR("  strongest '%s': BSSID %s, Ch %i, RSSI %i\n"), g_pendWifiSsid, WiFi.BSSIDstr(best).c_str(), WiFi.channel(best), WiFi.RSSI(best));
+			WiFi.begin(g_pendWifiSsid, g_pendWifiKey, WiFi.channel(best), WiFi.BSSID(best));	//begin() copies the BSSID, so scanDelete() below is safe
+			g_lastWifiChannel = WiFi.channel(best);
+		}
+		else
+		{
+			WiFi.begin(g_pendWifiSsid, g_pendWifiKey);	//scan failed / timed out / SSID hidden -> plain connect
+			g_lastWifiChannel = -1;
+		}
+		WiFi.scanDelete();					//free the scan-result heap
+		g_bWifiScanPending = false;
+		return true;						//begin() issued -- caller counts the attempt
+	}
+
 #if defined(ARDUINO_ARCH_ESP8266)
 	WiFi.hostname(GetHostName());
 #else
@@ -677,6 +801,8 @@ void SetupWifiInternal()
 		strWifiStatus = wifi_ssid;
 		strWifiStatus += " ";
 		strWifiStatus += MacToString(cBSSID);
+
+		return true;
 	}
 	else
 	{
@@ -697,52 +823,43 @@ void SetupWifiInternal()
 
 		csprintf(PSTR("WiFi attempting to connect to %s (attempt %i)...\n"), use_ssid, iWifiConnAttempts);
 
-#if defined(ARDUINO_ARCH_ESP32)
-		//ESP32 default is WIFI_FAST_SCAN: it stops at the FIRST matching-SSID AP found in channel order and
-		//associates regardless of RSSI, so on a multi-AP roaming SSID it never picks the strongest. Force a
-		//full scan of every channel so the (default) by-signal sorter has all candidates and connects to the
-		//nearest AP. Only for the SSID-only path -- the BSSID-pinned branch above deliberately targets one AP.
-		WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-		WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-		WiFi.begin(use_ssid, use_key);
-#elif defined(ARDUINO_ARCH_ESP8266)
-		//ESP8266 has no scan/sort-method control (its SDK station_config exposes only an RSSI/authmode threshold)
-		//and its fast scan grabs the first matching AP, not the strongest. So do the equivalent in software: scan,
-		//pick the strongest BSSID for our SSID, and connect to that specific BSSID+channel. Falls back to a plain
-		//SSID connect if the scan turns up nothing (SSID hidden, or scan failed -> n<=0).
-		{
-			int best = -1;
-			int n = WiFi.scanNetworks();
-			for(int i = 0; i < n; i++)
-			{
-				if(WiFi.SSID(i) == use_ssid && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best)))
-				{
-					best = i;
-				}
-			}
-
-			if(best >= 0)
-			{
-				csprintf(PSTR("  strongest '%s': BSSID %s, Ch %i, RSSI %i\n"), use_ssid, WiFi.BSSIDstr(best).c_str(), WiFi.channel(best), WiFi.RSSI(best));
-				WiFi.begin(use_ssid, use_key, WiFi.channel(best), WiFi.BSSID(best));	//begin() copies the BSSID, so scanDelete() below is safe
-			}
-			else
-			{
-				WiFi.begin(use_ssid, use_key);
-			}
-			WiFi.scanDelete();	//free the ESP8266 scan-result heap
-		}
-#else
-		WiFi.begin(use_ssid, use_key);
-#endif
-
+		//Common bookkeeping for every SSID-mode path, set up-front so it stays correct even when the
+		//software-scan path below defers the actual begin() to a later async-completion pass.
 		g_lastWifiSSID = use_ssid;
 		g_lastWifiPSK = wifi_key;
 		g_lastWifiChannel = -1;
 		memset(g_lastBSSID, 0, sizeof(g_lastBSSID));
-
 		strWifiStatus = "SSID ";
 		strWifiStatus += use_ssid;
+
+#if defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR >= 2
+		//ESP32 default is WIFI_FAST_SCAN: it stops at the FIRST matching-SSID AP found in channel order and
+		//associates regardless of RSSI, so on a multi-AP roaming SSID it never picks the strongest. Force a
+		//full scan of every channel so the (default) by-signal sorter has all candidates and connects to the
+		//nearest AP. Only for the SSID-only path -- the BSSID-pinned branch above deliberately targets one AP.
+		//This scan runs inside begin() in the WiFi task -- non-blocking, so no state machine is needed here.
+		//setScanMethod/setSortMethod arrived in ESP32 core 2.0.0; older cores fall into the async scan below.
+		WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+		WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+		WiFi.begin(use_ssid, use_key);
+		return true;
+#elif defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
+		//ESP8266 has no scan/sort-method control, and ESP32 core 1.0.x predates setScanMethod; both grab the
+		//first matching AP, not the strongest. Do the strongest-AP pick in software, but ASYNCHRONOUSLY: the
+		//old blocking WiFi.scanNetworks() stalled loop() ~2s, unacceptable in a base class that drives real
+		//hardware. Kick a non-blocking scan here and return false; the caller polls SetupWifiInternal() every
+		//loop and Phase 2 (top of this function) picks the strongest BSSID and begins once results land.
+		//Strictly scan-THEN-connect, exactly like the old blocking path -- never a scan running during association.
+		g_pendWifiSsid = use_ssid;
+		g_pendWifiKey  = use_key;
+		WiFi.scanNetworks(true /*async*/, false);
+		g_ulWifiScanKickMs = millis();
+		g_bWifiScanPending = true;
+		return false;		//no begin() yet -- caller must NOT count this as an attempt until Phase 2 completes
+#else
+		WiFi.begin(use_ssid, use_key);
+		return true;
+#endif
 
 	}
 #else
@@ -759,6 +876,8 @@ void SetupWifiInternal()
 	memset(g_lastBSSID, 0, sizeof(g_lastBSSID));
 
 #endif
+
+	return true;
 }
 
 
@@ -816,6 +935,48 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 #endif
 
 bool bLeifSetupBeginDone = false;
+//Human-readable PHY protocol / rate ceiling of the STA interface, read LIVE at call time rather
+//than cached at boot. It exists because a radio pinned to 802.11b looks completely normal from
+//every other angle -- it associates, it holds a strong RSSI, its retry count is clean -- it just
+//moves every frame at 11 Mbps. Reporting it here makes the pin greppable across the whole fleet
+//over HTTP, instead of visible only by reading tx_rate from the access point's side.
+static String PhyProtocolString()
+{
+#if defined(ARDUINO_ARCH_ESP32)
+	uint8_t bitmap = 0;
+	if(esp_wifi_get_protocol(WIFI_IF_STA, &bitmap) != ESP_OK)
+	{
+		return F("(unavailable)");
+	}
+
+	String s = F("802.11");
+	if(bitmap & WIFI_PROTOCOL_11B) s += F("b");
+	if(bitmap & WIFI_PROTOCOL_11G) s += F("g");
+	if(bitmap & WIFI_PROTOCOL_11N) s += F("n");
+	if(bitmap & WIFI_PROTOCOL_LR)  s += F("+LR");
+
+	uint8_t unknown = bitmap & ~(WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+	if(unknown)		//11AX and friends -- naming them by macro would break the older cores this base still builds for
+	{
+		char temp[16];
+		sprintf(temp, PSTR("+0x%02X"), unknown);
+		s += temp;
+	}
+
+	return bitmap ? s : F("802.11 none?!");
+#elif defined(ARDUINO_ARCH_ESP8266)
+	switch(WiFi.getPhyMode())	//a single MAXIMUM, not a bitmap: 11N implies b/g fallback
+	{
+	case WIFI_PHY_MODE_11B:	return F("802.11b");
+	case WIFI_PHY_MODE_11G:	return F("802.11bg");
+	case WIFI_PHY_MODE_11N:	return F("802.11bgn");
+	default:				return F("(unknown)");
+	}
+#else
+	return F("(n/a)");
+#endif
+}
+
 void LeifSetupBegin()
 {
 	while(IsLeifSetupBeginDone())
@@ -861,6 +1022,60 @@ void LeifSetupBegin()
 #endif
 
 	WiFi.mode(WIFI_STA);
+
+	//---- Regulatory domain: force the full 13-channel plan (1..13) ---------------------
+	//Leif's WiFi runs a 4-channel plan (1/5/9/13); channel 13 only exists outside the US
+	//domain, and neither core enables it robustly by default. The ESP32 boots country
+	//"01" with WIFI_COUNTRY_POLICY_AUTO, which passive-scans 12/13 and can miss a
+	//ch13-only AP until it hears the AP's country IE; the ESP8266 default is
+	//{"CN",1,13,AUTO}. Pin an explicit MANUAL 1..13 domain on both so all 13 channels are
+	//actively scanned and joinable regardless of the AP beacon. Set-once here, right after
+	//WiFi.mode() has started the driver and before the first scan/connect.
+	{
+		wifi_country_t country;
+		memset(&country, 0, sizeof(country));		//zeros ESP32 max_tx_power (use-default) + any optional fields
+		country.cc[0] = 'T'; country.cc[1] = 'H'; country.cc[2] = 0;	//Thailand: a real 1..13 domain
+		country.schan = 1;
+		country.nchan = 13;
+		country.policy = WIFI_COUNTRY_POLICY_MANUAL;	//always use this domain, never defer to the AP
+#if defined(ARDUINO_ARCH_ESP32)
+		esp_wifi_set_country(&country);				//must follow the esp_wifi_start() inside WiFi.mode()
+#elif defined(ARDUINO_ARCH_ESP8266)
+		wifi_set_country(&country);
+#endif
+	}
+	//------------------------------------------------------------------------------------
+
+	//---- PHY protocol: never let a STORED setting silently pin the radio to 802.11b -----
+	//The protocol bitmap is a PERSISTENT setting, not an application one: esp_wifi_restore()'s
+	//own documentation lists esp_wifi_set_protocol alongside set_config and set_mode as "WiFi
+	//stack persistent settings", i.e. it lives in NVS (nvs.net80211). The radio reads it at
+	//init, before any sketch code runs, and an OTA never touches that partition -- so a board
+	//that once got pinned to 802.11b STAYS pinned across a reflash, forever, in silence.
+	//2026-08-16, measured on Leif's fleet: three boards were sitting at 11 Mbps on clean links
+	//(retries 0.08-0.10), and aircon-gateway proved the mechanism -- reflashed, software reset
+	//confirmed, came back still at 11 Mbps. At 11b a frame costs several times the airtime of
+	//the same frame at 72 Mbps on a shared channel, and nothing on the device would ever say so.
+	//Setting it explicitly every boot fixes the live radio AND rewrites the stored value, so
+	//flashing this firmware IS the un-pin -- no separate NVS erase step is needed.
+	//IDF's own default is already B|G|N, so on a healthy board this is a no-op.
+#if defined(ARDUINO_ARCH_ESP32)
+	{
+		//⚠ On a dual-band part left in WIFI_BAND_MODE_AUTO this API returns ESP_ERR_NOT_SUPPORTED
+		//and esp_wifi_set_protocols() is the replacement; the ESP32 is 2.4GHz-only so it takes the
+		//simple path. Report the outcome either way -- a SILENT pin is what hid this for months,
+		//so a silent failure to UNpin would be the same bug wearing a different hat.
+		esp_err_t err = esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+		if(err != ESP_OK)
+		{
+			csprintf(PSTR("PHY protocol.....: SET FAILED (%s) -- radio may still be pinned\n"), esp_err_to_name(err));
+		}
+	}
+#elif defined(ARDUINO_ARCH_ESP8266)
+	WiFi.setPhyMode(WIFI_PHY_MODE_11N);	//same trap, same fix -- the 8266's phy mode is flash-persisted by the SDK too
+#endif
+	csprintf(PSTR("PHY protocol.....: %s\n"), PhyProtocolString().c_str());
+	//------------------------------------------------------------------------------------
 
 	csprintf(PSTR("WiFi: %s\n"), LeifGetAllowWifiConnection()?PSTR("ENABLED"):PSTR("DISABLED"));
 	csprintf(PSTR("Using WiFi SSID: %s\n"), wifi_ssid);
@@ -910,6 +1125,9 @@ void LeifSetupBegin()
 		//csprintf("ONPROGRESS: wdt reset from core %i\n",xPortGetCoreID());
 		esp_task_wdt_reset();
 #endif
+		//loop() doesn't run for the whole upload, so anything the app must keep alive
+		//(e.g. an external hardware watchdog) gets its chance here
+		DoInterimCallback();
 	}
 	);
 
@@ -1145,7 +1363,10 @@ void LeifSetupBegin()
 			s += temp;
 		}
 
-
+		//Anything but 802.11bgn here means the radio is pinned -- see the PHY protocol block in
+		//LeifSetupBegin() for why that survives a reflash and what it costs.
+		sprintf(temp, PSTR("PHY protocol.....: %s\n"), PhyProtocolString().c_str());
+		s += temp;
 
 
 		server.send(200, PSTR("text/plain"), s);
@@ -1775,6 +1996,7 @@ void LeifLoop()
 				iWifiConnAttempts = 0;
 				bAllowBSSID = true;
 				bNewWifiConnection = true;
+				g_bWifiScanPending = false;	//connected -- drop any in-flight async scan bookkeeping (a later reconnect rescans fresh)
 
 			}
 
@@ -1783,12 +2005,27 @@ void LeifLoop()
 		{
 			bIpPrinted = false;
 #if defined(WIFI_RECONNECT)
+			if(g_bWifiScanPending)
+			{
+				//A software strongest-AP scan kicked on an earlier pass is completing asynchronously.
+				//Poll it every loop (never blocks loop()). Only when it finishes and issues begin() do
+				//we count the attempt and (re)start the reconnect clock.
+				if(SetupWifiInternal())
+				{
+					WiFi.reconnect();
+					iWifiConnAttempts++;
+					ulWifiTotalConnAttempts++;
+					ulWifiReconnect = millis();
+					ulSecondCounterWiFi = 0;
+				}
+			}
+
 			uint32_t ulReconnectMs=15000;
 			if(iWifiConnAttempts>5) ulReconnectMs=30000;	//reconnect more slowly
 			if(iWifiConnAttempts>10) ulReconnectMs=60000;	//reconnect more slowly
 			if(iWifiConnAttempts>15) ulReconnectMs=120000;	//reconnect more slowly
 
-			if((millis() - ulWifiReconnect) >= ulReconnectMs)
+			if(!g_bWifiScanPending && (millis() - ulWifiReconnect) >= ulReconnectMs)
 			{
 
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -1834,11 +2071,16 @@ void LeifLoop()
 #endif
 
 
-					SetupWifiInternal();
-
-					WiFi.reconnect();
-					iWifiConnAttempts++;
-					ulWifiTotalConnAttempts++;
+					//SetupWifiInternal() issues begin() now and returns true (BSSID-pinned, ESP32>=2
+					//native, or plain), OR -- on the software-scan platforms (ESP8266 / ESP32 core 1.0.x)
+					//-- kicks an async scan and returns false; the poll branch above then finishes the
+					//attempt on a later loop pass. Only a real begin() counts as an attempt.
+					if(SetupWifiInternal())
+					{
+						WiFi.reconnect();
+						iWifiConnAttempts++;
+						ulWifiTotalConnAttempts++;
+					}
 				}
 				ulSecondCounterWiFi = 0;
 			}
@@ -2132,7 +2374,21 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		}
 		else if(bssid_color == 2)
 		{
-			string.concat(PSTR("&nbsp;(temporary - not saved)"));
+			//Offer a one-click Save that persists the currently-pinned AP to config WITHOUT reconnecting,
+			//as the actionable word right inside the "temporary" note. Only where WiFiScan registered a
+			//persist callback (else the /wifipick?savecur=1 handler no-ops) -- otherwise a plain note.
+			if(fnWifiScanPersistAvailable && fnWifiScanPersistAvailable())
+			{
+				string.concat(PSTR("&nbsp;(temporary - <a href=\"/wifipick?b="));
+				string.concat(WiFi.BSSIDstr());
+				string.concat(PSTR("&c="));
+				string.concat(WiFi.channel());
+				string.concat(PSTR("&savecur=1\">Save</a>)"));
+			}
+			else
+			{
+				string.concat(PSTR("&nbsp;(temporary - not saved)"));
+			}
 		}
 
 		if(bssid_color)

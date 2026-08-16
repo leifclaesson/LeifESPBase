@@ -6,6 +6,7 @@
 #else
 #include "WiFi.h"
 #include "WebServer.h"
+#include "LeifWebServer.h"
 #endif
 #ifndef NO_OTA
 #include <ArduinoOTA.h>
@@ -81,7 +82,7 @@ private:
 #if defined(ARDUINO_ARCH_ESP8266)
 extern ESP8266WebServer server;
 #else
-extern WebServer server;
+extern LeifWebServer server;
 #endif
 extern WiFiClient telnetClients;
 

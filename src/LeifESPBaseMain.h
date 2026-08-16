@@ -27,6 +27,12 @@ void LeifSetMaxCommandLength(uint16_t max_chars);
 typedef std::function<const char * (const String &)> LeifGetWiFiAPName;
 void LeifRegisterGetWiFiAPName(LeifGetWiFiAPName fn);
 
+//True if the WiFi-scan picker has a persist callback registered (i.e. a runtime "Save" can write config.txt).
+//Registered by WiFiScan's InitWifiScan(); nullptr on projects without a scan page, so the main-page Save link
+//is only offered where it can actually work.
+typedef std::function<bool ()> LeifWifiScanPersistAvailable;
+void LeifRegisterWifiScanPersistAvailable(LeifWifiScanPersistAvailable fn);
+
 enum eHttpMainTable
 {
 	eHttpMainTable_BeforeFirstRow,
