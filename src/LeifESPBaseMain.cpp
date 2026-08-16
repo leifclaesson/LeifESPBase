@@ -2421,22 +2421,22 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		string.concat(WiFi.RSSI());
 		string.concat(PSTR(" (max "));
 		string.concat(max_rssi);
-		string.concat(PSTR(")"));
+		string.concat(PSTR(")</td></tr>"));
 
-		//The RSSI above is only OUR side of the link. If something registered a way to read the other
-		//end -- what the access point hears US at -- show it right beside ours, because the pair is
-		//what makes a deaf access point visible: our number stays healthy while the AP's collapses.
+		//Leif, 2026-08-16: the far end of the link gets its OWN row rather than being crammed in beside
+		//the RSSI, which stretched the whole table. The RSSI above is only OUR side; this is what the
+		//access point hears US at. The pair is what makes a deaf AP visible -- ours stays healthy while
+		//the AP's collapses. No row at all unless something is actually reporting it.
 		if(fnGetApRxText)
 		{
 			const char * szApRx=fnGetApRxText();
 			if(szApRx && *szApRx)
 			{
-				string.concat(PSTR("&nbsp;&nbsp;&nbsp;AP hears us: "));
+				string.concat(PSTR("<tr><td colspan=\"5\">"));
 				string.concat(szApRx);
+				string.concat(PSTR("</td></tr>"));
 			}
 		}
-
-		string.concat(PSTR("</td></tr>"));
 	}
 
 
