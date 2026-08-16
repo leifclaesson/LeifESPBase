@@ -484,6 +484,12 @@ void LeifRegisterWifiScanPersistAvailable(LeifWifiScanPersistAvailable fn)
 	fnWifiScanPersistAvailable=fn;
 }
 
+LeifGetApRxText fnGetApRxText;
+void LeifRegisterGetApRxText(LeifGetApRxText fn)
+{
+	fnGetApRxText=fn;
+}
+
 static std::vector<LeifCommandCallback> vecOnCommand;
 
 void LeifRegisterCommandCallback(LeifCommandCallback cb)
@@ -2415,7 +2421,22 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		string.concat(WiFi.RSSI());
 		string.concat(PSTR(" (max "));
 		string.concat(max_rssi);
-		string.concat(PSTR(")</td></tr>"));
+		string.concat(PSTR(")"));
+
+		//The RSSI above is only OUR side of the link. If something registered a way to read the other
+		//end -- what the access point hears US at -- show it right beside ours, because the pair is
+		//what makes a deaf access point visible: our number stays healthy while the AP's collapses.
+		if(fnGetApRxText)
+		{
+			const char * szApRx=fnGetApRxText();
+			if(szApRx && *szApRx)
+			{
+				string.concat(PSTR("&nbsp;&nbsp;&nbsp;AP hears us: "));
+				string.concat(szApRx);
+			}
+		}
+
+		string.concat(PSTR("</td></tr>"));
 	}
 
 

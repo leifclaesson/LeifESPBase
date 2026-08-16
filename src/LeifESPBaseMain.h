@@ -27,6 +27,14 @@ void LeifSetMaxCommandLength(uint16_t max_chars);
 typedef std::function<const char * (const String &)> LeifGetWiFiAPName;
 void LeifRegisterGetWiFiAPName(LeifGetWiFiAPName fn);
 
+//The other half of the WiFi link: what the ACCESS POINT hears US at, which we can never measure
+//ourselves (WiFi.RSSI() is only our own side). Something outside this lib has to be told it and
+//register a way to read it back -- the main-page status render shows it next to our own RSSI when
+//a callback is registered and returns a non-empty string. nullptr on projects that don't do this.
+//The string is emitted into the page as-is, so the provider owns its markup and its escaping.
+typedef std::function<const char * ()> LeifGetApRxText;
+void LeifRegisterGetApRxText(LeifGetApRxText fn);
+
 //True if the WiFi-scan picker has a persist callback registered (i.e. a runtime "Save" can write config.txt).
 //Registered by WiFiScan's InitWifiScan(); nullptr on projects without a scan page, so the main-page Save link
 //is only offered where it can actually work.
