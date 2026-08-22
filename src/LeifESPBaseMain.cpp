@@ -50,6 +50,9 @@ String LeifGetResetReasonString()
 
 static unsigned long ulSecondCounterWiFiWatchdog = 0;
 
+static fn_LeifESPBaseOtaTooLargeCallback g_cbOtaTooLarge=NULL;
+void LeifSetOtaTooLargeCallback(fn_LeifESPBaseOtaTooLargeCallback cb) { g_cbOtaTooLarge=cb; }
+
 
 #if defined(ARDUINO_ARCH_ESP32)
 
@@ -1219,6 +1222,19 @@ void LeifSetupBegin()
 		}
 		else
 		{
+#if defined(ARDUINO_ARCH_ESP32)
+			//An image bigger than the inactive app slot is refused up front: Updater.cpp compares the
+			//size declared in the OTA handshake against the partition and returns UPDATE_ERROR_SPACE
+			//("too large %lu > %u") before writing a byte, so nothing is half-flashed here. It is also
+			//the one moment a unit knows for certain that its partition layout cannot hold the firmware
+			//it is being handed. Default is no handler, so every project that does not opt in fails
+			//exactly as before. A handler that repartitions ends in esp_restart() and never returns.
+			if(error==OTA_BEGIN_ERROR && Update.getError()==UPDATE_ERROR_SPACE && g_cbOtaTooLarge)
+			{
+				csprintf(PSTR("OTA REFUSED: image is larger than the app slot.\n"));
+				g_cbOtaTooLarge();
+			}
+#endif
 			DoOnShutdownCallback("OTA_FAILED");
 			csprintf(PSTR("OTA update FAILED (%i)\n"),error);
 			ESP.restart();
