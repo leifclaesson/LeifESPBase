@@ -1224,12 +1224,19 @@ void LeifSetupBegin()
 		{
 #if defined(ARDUINO_ARCH_ESP32)
 			//An image bigger than the inactive app slot is refused up front: Updater.cpp compares the
-			//size declared in the OTA handshake against the partition and returns UPDATE_ERROR_SPACE
-			//("too large %lu > %u") before writing a byte, so nothing is half-flashed here. It is also
-			//the one moment a unit knows for certain that its partition layout cannot hold the firmware
-			//it is being handed. Default is no handler, so every project that does not opt in fails
-			//exactly as before. A handler that repartitions ends in esp_restart() and never returns.
-			if(error==OTA_BEGIN_ERROR && Update.getError()==UPDATE_ERROR_SPACE && g_cbOtaTooLarge)
+			//size declared in the OTA handshake against the partition and returns UPDATE_ERROR_SIZE
+			//("too large %lu > %u", Updater.cpp:285) before writing a byte, so nothing is half-flashed
+			//here. It is also the one moment a unit knows for certain that its partition layout cannot
+			//hold the firmware it is being handed. Default is no handler, so every project that does
+			//not opt in fails exactly as before. A handler that repartitions ends in esp_restart() and
+			//never returns.
+			//⛔ It is UPDATE_ERROR_SIZE, NOT UPDATE_ERROR_SPACE. SPACE is only ever set while WRITING
+			//(Updater.cpp:838), which an over-size image never reaches -- so testing for SPACE here is
+			//a condition that can never be true. Bench-caught on COM14 2026-08-22: the board refused a
+			//1,400,000-byte push into a 1,310,720-byte slot and printed only "OTA update FAILED (1)".
+			//The other two UPDATE_ERROR_SIZE sites are size==0 and a signature-too-small check that is
+			//compiled out without UPDATE_SIGN, so this stays effectively unambiguous.
+			if(error==OTA_BEGIN_ERROR && Update.getError()==UPDATE_ERROR_SIZE && g_cbOtaTooLarge)
 			{
 				csprintf(PSTR("OTA REFUSED: image is larger than the app slot.\n"));
 				g_cbOtaTooLarge();
