@@ -59,7 +59,9 @@ public:
 		this->pDest=pDestination;
 	}
 
-	WiFiClient * pDest;
+	WiFiClient * pDest;		//the seat array, LEIF_TELNET_MAX_CLIENTS long
+
+	int8_t iOnlySeat=-1;	//-1 = every occupied seat; >=0 = that seat alone (welcome + scrollback)
 
 	uint32_t cbcounter=0;
 
@@ -67,6 +69,9 @@ public:
 
 	size_t write(uint8_t value) override;
     size_t write(const uint8_t *buffer, size_t size);
+
+private:
+	void fanout(const uint8_t * buffer, size_t size);
 };
 
 extern TelnetClientPrint telnetprint;

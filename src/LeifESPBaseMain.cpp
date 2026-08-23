@@ -381,18 +381,36 @@ bool LeifGetAllowSerialCommands()
 void HandleCommandLine();
 
 WiFiServer telnet(23);
-WiFiClient telnetClients;
+WiFiClient telnetClients[LEIF_TELNET_MAX_CLIENTS];
+uint8_t telnetClientCount=0;
 
-TelnetClientPrint telnetprint(&telnetClients);
+TelnetClientPrint telnetprint(telnetClients);
+
+//Writes to every occupied seat, or to just one when iOnlySeat is set. A closed seat is
+//skipped rather than written to; WiFiClient::write on a dead client is a silent no-op.
+void TelnetClientPrint::fanout(const uint8_t * buffer, size_t size)
+{
+	if(iOnlySeat>=0)
+	{
+		if(pDest[iOnlySeat].connected()) pDest[iOnlySeat].write(buffer,size);
+		return;
+	}
+
+	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
+	{
+		if(pDest[i] && pDest[i].connected()) pDest[i].write(buffer,size);
+	}
+}
 
 size_t TelnetClientPrint::write(uint8_t value)
 {
 	if(value=='\n')
 	{
-		pDest->write('\r');
+		uint8_t cr='\r';
+		fanout(&cr,1);
 	}
 
-	pDest->write(value);
+	fanout(&value,1);
 	return 1;
 }
 
@@ -407,7 +425,7 @@ size_t TelnetClientPrint::dbg(const uint8_t *buffer, size_t size)
 		case '\n': temp='N'; break;
 		default: break;
 		}*/
-		pDest->write(temp);
+		fanout(&temp,1);
 	}
 	//pDest->write(buffer,size);
 	return size;
@@ -430,8 +448,8 @@ size_t TelnetClientPrint::write(const uint8_t *buffer, size_t size)
 			int add=0;
 			if(!bLastCharNewLine) add=1;	//if the last character is not a new line, we need to pass it through!
 			//Serial.printf("!(%i-%i=%i)",i,begin,i-begin);
-			pDest->write((const uint8_t *) &buffer[begin],i-begin+add);
-			if(bLastCharNewLine) pDest->write((const uint8_t *) "\r\n",2);
+			fanout((const uint8_t *) &buffer[begin],i-begin+add);
+			if(bLastCharNewLine) fanout((const uint8_t *) "\r\n",2);
 			begin=i+1;
 		}
 		cbcounter++;
@@ -451,9 +469,12 @@ size_t TelnetClientPrint::write(const uint8_t *buffer, size_t size)
 
 
 
-int disconnectedClient = 1;
+bool bSeatOccupied[LEIF_TELNET_MAX_CLIENTS]={false};
 
-String strTelnetCmdBuffer;
+//Per seat, not shared: two people typing at once would otherwise interleave into one
+//line, and one client's telnet negotiation bytes would eat the other's characters.
+String strTelnetCmdBuffer[LEIF_TELNET_MAX_CLIENTS];
+int iTelnetNegotiate[LEIF_TELNET_MAX_CLIENTS]={0};
 String strSerialCmdBuffer;
 
 #define WIFI_RECONNECT
@@ -2126,19 +2147,52 @@ void LeifLoop()
 		}
 	}
 
+	//Sweep for departures FIRST, and every pass -- the old single-seat code only checked
+	//this when no new client was pending, so a seat freed in the same pass looked taken.
+	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
+	{
+		if(bSeatOccupied[i] && !telnetClients[i].connected())
+		{
+			telnetClients[i].stop();
+			bSeatOccupied[i]=false;
+			strTelnetCmdBuffer[i]="";
+			iTelnetNegotiate[i]=0;
+			if(telnetClientCount) telnetClientCount--;
+			csprintf(PSTR("Telnet client disconnected. %u of %u seats in use.\n"),
+					(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
+		}
+	}
+
 	if(telnet.hasClient())
 	{
-		if(!telnetClients || !telnetClients.connected())
+		int seat=-1;
+		for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
 		{
-			if(telnetClients)
-			{
-				telnetClients.stop();
-				//csprintf("Telnet Client Stop\n");
-			}
-			telnetClients = telnet.available();
+			if(!bSeatOccupied[i]) { seat=i; break; }
+		}
+
+		if(seat<0)
+		{
+			//Full. TELL the newcomer instead of evicting a seated client -- the old code
+			//dropped whoever was on, silently, which reads as a random disconnection.
+			WiFiClient reject=telnet.available();
+			reject.print(F("\r\nAll console seats on this device are in use. Try again shortly.\r\n"));
+			reject.stop();
+		}
+		else
+		{
+			telnetClients[seat] = telnet.available();
+			bSeatOccupied[seat]=true;
+			telnetClientCount++;
+			strTelnetCmdBuffer[seat]="";
+			iTelnetNegotiate[seat]=0;
 
 			String strUptime;
 			LeifUptimeString(strUptime);
+
+			//Welcome banner and scrollback go to the NEWCOMER only; everyone already
+			//seated has seen the scrollback and does not want it replayed at them.
+			telnetprint.iOnlySeat=seat;
 
 			telnetprint.printf("\n");
 			for(int k=0;k<2;k++)
@@ -2150,37 +2204,30 @@ void LeifLoop()
 				}
 				telnetprint.write((uint8_t *) "=========\n",10);
 				if(k>0) break;
-				telnetprint.printf(PSTR("Welcome to %s, ip %s! Uptime: %s\n"), GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str());
+				telnetprint.printf(PSTR("Welcome to %s, ip %s! Uptime: %s (seat %u of %u)\n"),
+						GetHostName(), WiFi.localIP().toString().c_str(), strUptime.c_str(),
+						(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
 			}
 
 #ifndef NO_SERIAL_DEBUG
-			Serial.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
+			Serial.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients[seat].remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
 #ifdef USE_SERIAL1_DEBUG
-			Serial1.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients.remoteIP().toString().c_str(), strUptime.c_str());
+			Serial1.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients[seat].remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
 			telnetprint.write((const uint8_t *) scrollbackBuffer.dataFirst(), scrollbackBuffer.sizeFirst());
 			telnetprint.write((const uint8_t *) scrollbackBuffer.dataSecond(), scrollbackBuffer.sizeSecond());
 
-			telnetClients.flush();  // clear input buffer, else you get strange characters
-			disconnectedClient = 0;
-		}
+			telnetprint.iOnlySeat=-1;
 
+			telnetClients[seat].flush();  // clear input buffer, else you get strange characters
 
-
-	}
-	else
-	{
-		if(!telnetClients.connected())
-		{
-			if(disconnectedClient == 0)
-			{
-				csprintf(PSTR("Telnet client disconnected.\n"));
-				telnetClients.stop();
-				disconnectedClient = 1;
-			}
+			//Announced to the others AFTER the banner, so a shared debug session shows
+			//who else turned up rather than just going quiet.
+			csprintf(PSTR("Telnet client connected. %u of %u seats in use.\n"),
+					(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
 		}
 	}
 
@@ -2622,53 +2669,57 @@ void LeifSetMaxCommandLength(uint16_t max_chars)
 void HandleCommandLine()
 {
 
-	while(telnetClients.available())
+	for(int seat=0;seat<LEIF_TELNET_MAX_CLIENTS;seat++)
 	{
-		char inputChar=telnetClients.read();
+		if(!bSeatOccupied[seat]) continue;
 
-		static int iNegotiate=0;
-		if(iNegotiate>0)
+		while(telnetClients[seat].available())
 		{
-			iNegotiate--;
-			continue;
-		}
+			char inputChar=telnetClients[seat].read();
 
-		if(vecOnCommand.size())
-		{
-			switch(inputChar)
+			if(iTelnetNegotiate[seat]>0)
 			{
-			case '\r':
-				//if(strTelnetCmdBuffer.length())
+				iTelnetNegotiate[seat]--;
+				continue;
+			}
+
+			if(vecOnCommand.size())
+			{
+				switch(inputChar)
 				{
-					DoCommandCallback(strTelnetCmdBuffer,eCommandLineSource_Telnet);
-				}
-				//fall through
-			case '\n':
-				strTelnetCmdBuffer="";
-				break;
-			case '\b':
-			case 0x7f:
-				{
-					int len=strTelnetCmdBuffer.length();
-					if(len)
+				case '\r':
+					//if(strTelnetCmdBuffer[seat].length())
 					{
-						strTelnetCmdBuffer.remove(len-1, 1);
+						DoCommandCallback(strTelnetCmdBuffer[seat],eCommandLineSource_Telnet);
 					}
+					//fall through
+				case '\n':
+					strTelnetCmdBuffer[seat]="";
+					break;
+				case '\b':
+				case 0x7f:
+					{
+						int len=strTelnetCmdBuffer[seat].length();
+						if(len)
+						{
+							strTelnetCmdBuffer[seat].remove(len-1, 1);
+						}
+					}
+					break;
+				case 0xff:	//ignore telnet negotiation
+					iTelnetNegotiate[seat]=2;
+					break;
+				default:
+					strTelnetCmdBuffer[seat]+=inputChar;
+					break;
 				}
-				break;
-			case 0xff:	//ignore telnet negotiation
-				iNegotiate=2;
-				break;
-			default:
-				strTelnetCmdBuffer+=inputChar;
-				break;
 			}
 		}
-	}
 
-	if(strTelnetCmdBuffer.length()>uCmdMax)
-	{
-		strTelnetCmdBuffer.remove(0, strTelnetCmdBuffer.length()-uCmdMax);
+		if(strTelnetCmdBuffer[seat].length()>uCmdMax)
+		{
+			strTelnetCmdBuffer[seat].remove(0, strTelnetCmdBuffer[seat].length()-uCmdMax);
+		}
 	}
 
 

@@ -69,14 +69,24 @@ private:
 
 
 
+//Console seats. The scrollback is one shared buffer and does NOT scale with this; what
+//costs per seat is the TCP connection. //Leif, 2026-08-23: three on the bulbs, five on ESP32.
+#ifndef LEIF_TELNET_MAX_CLIENTS
+#if defined(ARDUINO_ARCH_ESP8266)
+#define LEIF_TELNET_MAX_CLIENTS 3
+#else
+#define LEIF_TELNET_MAX_CLIENTS 5
+#endif
+#endif
+
 #ifdef NO_SERIAL_DEBUG
 #ifdef USE_SERIAL1_DEBUG
-#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #else
-#define csprintf(...) { if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 #else
-#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClients) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -84,7 +94,8 @@ extern ESP8266WebServer server;
 #else
 extern LeifWebServer server;
 #endif
-extern WiFiClient telnetClients;
+extern WiFiClient telnetClients[LEIF_TELNET_MAX_CLIENTS];
+extern uint8_t telnetClientCount;	//seats currently occupied; kept current by LeifLoop
 
 extern ScrollbackBuffer scrollbackBuffer;
 
