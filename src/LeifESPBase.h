@@ -71,11 +71,37 @@ private:
 
 //Console seats. The scrollback is one shared buffer and does NOT scale with this; what
 //costs per seat is the TCP connection. //Leif, 2026-08-23: three on the bulbs, five on ESP32.
+//Amended the same day, once the ceiling below was measured -- //Leif, 2026-08-23: "the ESP32
+//1.0.6 has a three client limit, doesn't it? So let's do five clients if it's the version 3
+//SDK. Otherwise, let's do two as well. So we leave one for something else." and "we can do
+//two on the ESP8266."
+//
+//What that leaves one for: lwIP hands out a FIXED table of descriptors for the whole device,
+//and every UDP endpoint, every listening server and every ACCEPTED connection takes one. A
+//Lightbulb already spends 7 of them -- http listen, telnet listen, the MQTT connection,
+//ArduinoOTA's UDP, ESP1588's two PTP UDPs, and the RTA multicast UDP that the first rta() in
+//a deck creates and never frees. Against CONFIG_LWIP_MAX_SOCKETS that is:
+//    core 1.0.6 (IDF v3.3.5)  10 - 7 = 3 spare  -> 2 seats, one left for http / OTA
+//    core 3.x   (IDF v5.4)    16 - 7 = 9 spare  -> 5 seats, four to spare
+//so the ESP32 is TIGHTER than it looks on 1.0.6, not roomier than the bulbs. Anything older
+//than core 3 falls to 2; the gate is the version macro, and 1.0.6 does not define it at all.
+//Measured 2026-08-23 on the bench ESP32 172.22.28.123, core 1.0.6, with
+//misc/claude/rigs/zemismart-bench/socketbudget.py: the board grants exactly 3 seats, and
+//holding the third makes its own front page return zero bytes until the seat is released.
+//The ESP8266 splits its pools instead (MEMP_NUM_TCP_PCB=5 active connections, listeners and
+//UDP counted separately) and is NOT measured on hardware yet.
+//
+//Setting this past the socket budget does not fail loudly: lwip_accept() runs out of
+//descriptors and WiFiServer::hasClient() just returns false, so the accept path below never
+//sees the newcomer and cannot tell it the seats are full. lwIP has already completed the
+//handshake by then, so the client believes it connected and is then closed without a word.
 #ifndef LEIF_TELNET_MAX_CLIENTS
 #if defined(ARDUINO_ARCH_ESP8266)
-#define LEIF_TELNET_MAX_CLIENTS 3
-#else
+#define LEIF_TELNET_MAX_CLIENTS 2
+#elif defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
 #define LEIF_TELNET_MAX_CLIENTS 5
+#else
+#define LEIF_TELNET_MAX_CLIENTS 2
 #endif
 #endif
 
