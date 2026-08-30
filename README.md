@@ -49,7 +49,7 @@ Two things that catch people out:
 
 Set `-DETH_EXT_CLK` if the PHY is fed an external clock on GPIO0 instead of the ESP32 driving GPIO17. `ethernet_setup.h` has the pin-out.
 
-## The telnet console takes more than one client
+## The telnet console
 
 Five seats on ESP32 with Arduino core 3 or later, two on ESP8266 and on older ESP32 cores. Override with `-DLEIF_TELNET_MAX_CLIENTS=n`.
 
