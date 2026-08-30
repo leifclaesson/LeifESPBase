@@ -34,7 +34,7 @@ one interval of starting to listen, no matter how long the device has been up.
 
 Print it in a shape something else can read:
 
-    Uptime=1d 4h  WiFi=1d 4h  MQTT=1d 4h  HeapFree=118332  WiFi: -61  IP 172.22.24.23
+    Uptime=1d 4h  WiFi=1d 4h  MQTT=1d 4h  HeapFree=118332  WiFi: -61  IP 192.168.1.50
 
 `IP <address>` or `IP: <address>` — either spelling, case-insensitive. Keep the word `IP`
 next to it: a bare dotted quad on a console is ambiguous, because status lines are full of
@@ -48,7 +48,7 @@ discard it.
 Build with `-DUSE_ETHERNET` (ESP32 only) and this library handles the rest: it pulls in
 `<ETH.h>`, calls `ETH.begin()`, sets the hostname, and prints
 
-    Ethernet IP: 172.22.24.38
+    Ethernet IP: 192.168.1.51
 
 **once, when the link first acquires an address.** That is a one-shot announcement with
 exactly the limitation described above, so a wired device wants a recurring line of its own:
