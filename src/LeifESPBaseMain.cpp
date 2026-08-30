@@ -804,7 +804,14 @@ bool SetupWifiInternal()
 	WiFi.hostname(GetHostName());
 #else
 	WiFi.setHostname(GetHostName());
-	WiFi.setSleep(false);	//ESP32: disable WiFi modem-sleep so MQTT keepalives don't drop on a marginal link (chronic flap fix)
+	//Leif, 2026-08-30: "Drop it everywhere. Let's get rid of it. Keep the default."
+	//A WiFi.setSleep(false) lived here, claiming to stop MQTT keepalives dropping on a
+	//marginal link. //Leif: "it was never instrumented properly. It was one of many, many,
+	//many things we tried before we knew that the problem was that we were whispering at
+	//literally one one thousandth of actual ERP output power." So it never earned its place,
+	//and it cost every ESP32 firmware in the tree its WiFi modem sleep. The Arduino core's
+	//own default (WIFI_PS_MIN_MODEM on plain ESP32) is what we want; say nothing and get it.
+	//Do not re-add it -- and note IDF 4.4 hard-aborts if power save is NONE with Bluetooth up.
 #endif
 	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)

@@ -4,6 +4,7 @@ Reconstructed from the commit history. The library has never carried release num
 
 ## 2026
 
+- **2026-08-30** WiFi modem sleep is no longer disabled on ESP32, so the Arduino core default applies again.
 - **2026-08-30** The README now documents the telnet console, and the convention for putting the device's IP address on a recurring status line.
 - **2026-08-23** The telnet console takes several clients at once: five seats on ESP32 with Arduino core 3 or later, two on ESP8266 and on older ESP32 cores. Override with `-DLEIF_TELNET_MAX_CLIENTS=n`.
 - **2026-08-23** A device with every console seat taken refuses the newcomer with a message, instead of silently dropping whoever was already connected.
