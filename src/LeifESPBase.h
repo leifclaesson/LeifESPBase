@@ -90,6 +90,10 @@ private:
 //holding the third makes its own front page return zero bytes until the seat is released.
 //The ESP8266 splits its pools instead (MEMP_NUM_TCP_PCB=5 active connections, listeners and
 //UDP counted separately) and is NOT measured on hardware yet.
+//Leif, 2026-08-30: the multi-client console has been in use and works. That retires the
+//"has not been run on hardware" caveat the two commits that built it were committed under.
+//The ESP8266 pool split just above is a separate claim (a number, not "does it work") and
+//is still unmeasured.
 //
 //Setting this past the socket budget does not fail loudly: lwip_accept() runs out of
 //descriptors and WiFiServer::hasClient() just returns false, so the accept path below never
