@@ -1,7 +1,7 @@
 # LeifESPBase
 Base library for ESP8266/ESP32
 
-Provides HTTP server, mDNS, simultaneous serial and telnet console output (for debugging), OTA update.
+Provides HTTP server, simultaneous serial and telnet console output (for debugging), OTA update.
 
 It is designed for use _by programmers_.
 
@@ -16,6 +16,8 @@ As a programmer, I will always have a development environment set up and ready t
 This library depends on several great libraries listed below, which do most of the actual work. I am not claiming any ownership of those - LeifESPBase just ties them together.
 
 Enter your WiFi SSID/key to `environment_setup.h`
+
+[CHANGELOG.md](CHANGELOG.md) has the history.
 
 ## Put the device's own IP address on its periodic status line
 
@@ -34,8 +36,7 @@ Build with `-DUSE_ETHERNET` (ESP32 only) and the library does the rest: it inclu
 Same limitation as above, so a wired device wants its own recurring line:
 
     #if defined(USE_ETHERNET) & defined(ARDUINO_ARCH_ESP32)
-        csprintf("ETH link=%s  IP %s
-",
+        csprintf("ETH link=%s  IP %s\n",
                  ETH.linkUp() ? "up" : "down",
                  ETH.localIP().toString().c_str());
     #endif
@@ -51,17 +52,20 @@ Set `-DETH_EXT_CLK` if the PHY is fed an external clock on GPIO0 instead of the 
 
 ## The telnet console
 
-Five seats on ESP32 with Arduino core 3 or later, two on ESP8266 and on older ESP32 cores. Override with `-DLEIF_TELNET_MAX_CLIENTS=n`.
+Everything the sketch prints with `csprintf()` goes to the serial port and to a telnet server on port 23 at the same time, so a deployed board is as readable over the network as it is on the bench. Connect with any telnet client and you get the scrollback replayed first, then the live output. Typed lines go back to the sketch through `LeifRegisterCommandCallback`.
 
-The low number on the old cores isn't arbitrary. lwIP hands out one fixed table of socket descriptors for the whole device, and a busy sketch has usually spent most of it already (http listen, telnet listen, MQTT, OTA's UDP). Setting the seat count past what is left does not fail loudly: the accept never happens, so the client believes it connected and is then closed without a word.
+`LeifSetupConsole(bytes)` sizes the scrollback, before `LeifSetupBegin()`. It is one shared buffer, replayed to whoever just joined and not at everyone else.
 
-A full device refuses the newcomer ("All console seats on this device are in use. Try again shortly.") instead of dropping whoever is already sitting there. The scrollback is one shared buffer, replayed to whoever just joined and not at everyone else.
+The console has a fixed number of seats: five on ESP32 with Arduino core 3 or later, two on ESP8266 and on older ESP32 cores. Override with `-DLEIF_TELNET_MAX_CLIENTS=n`. A device with every seat taken refuses the newcomer, with a message:
+
+    All console seats on this device are in use. Try again shortly.
+
+Check what the sketch has left before raising the seat count. lwIP hands out one fixed table of socket descriptors for the whole device, and a busy sketch has usually spent most of it already (http listen, telnet listen, MQTT, OTA's UDP). Past that budget the accept never happens, so the client believes it connected and is then closed without a word.
 
 ## dependencies (ESP32)
 
 ArduinoOTA
 ESP32
-ESPmDNS
 FS
 Update
 WebServer
@@ -70,7 +74,6 @@ WiFi
 ## dependencies (ESP8266)
 
 ArduinoOTA
-ESP8266mDNS
 ESP8266-ping
 ESP8266WebServer
 ESP8266WiFi
