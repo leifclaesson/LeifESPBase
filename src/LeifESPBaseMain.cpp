@@ -386,19 +386,98 @@ uint8_t telnetClientCount=0;
 
 TelnetClientPrint telnetprint(telnetClients);
 
+//A console viewer that stops reading must never become the PRODUCT's problem. The stock
+//WiFiClient::write blocks in select() for a full second whenever the peer's receive window
+//is shut, and this is called once PER LINE -- so one wedged viewer stalls loopTask for as
+//long as there is backlog, starves the idle task, and the task watchdog reboots the board.
+//Measured on a Lightbulb 2026-09-03: a Bluetooth inquiry's console burst plus one telnet
+//client that never reads = SW_CPU_RESET three seconds later, reproducible on demand. It
+//stalled the MQTT publish in the same pass, so this was never console-only damage.
+//
+//⛔ The answer is NOT to drop lines. //Leif, 2026-09-03: "a console that loses lines is
+//bad... it would almost be better to disconnect because, well, warn in the console that
+//hey, disconnect it because you're not keeping up." So a seat either receives everything
+//or is BUMPED and told why -- there is never a silent gap for a reader to mistrust.
+#ifndef LEIFTELNET_WRITE_BUDGET_MS
+#define LEIFTELNET_WRITE_BUDGET_MS 20	//per seat, per line. A healthy LAN peer is writable immediately, so this is not a delay -- it is the ceiling on how much of loopTask one seat may cost.
+#endif
+#ifndef LEIFTELNET_STALL_STRIKES
+#define LEIFTELNET_STALL_STRIKES 25	//consecutive missed budgets before the seat is bumped -- half a second of failing to keep up, not one hiccup.
+#endif
+
+uint16_t uTelnetSeatStalls[LEIF_TELNET_MAX_CLIENTS]={0};
+bool bTelnetSeatBumped[LEIF_TELNET_MAX_CLIENTS]={false};	//read by LeifLoop's departure sweep, so the disconnect line can say WHY
+
+//One seat, bounded. Returns false when the seat did not accept the write inside its budget.
+//⛔ The worst case for the caller is (occupied seats x budget), never the slowest peer's
+//TCP window -- that unbounded wait is the whole bug this exists to remove.
+static bool TelnetSeatWrite(WiFiClient & client, const uint8_t * buffer, size_t size)
+{
+	int sockfd=client.fd();
+	if(sockfd<0)
+	{
+		return true;	//no socket -> nothing is owed to this seat, and it is not stalling
+	}
+
+	fd_set setWrite;
+	FD_ZERO(&setWrite);
+	FD_SET(sockfd,&setWrite);
+	struct timeval tv={ LEIFTELNET_WRITE_BUDGET_MS/1000, (LEIFTELNET_WRITE_BUDGET_MS%1000)*1000 };
+	if(select(sockfd+1,nullptr,&setWrite,nullptr,&tv)<=0)
+	{
+		return false;
+	}
+	if(!FD_ISSET(sockfd,&setWrite))
+	{
+		return false;
+	}
+
+	return client.write(buffer,size)>0;
+}
+
 //Writes to every occupied seat, or to just one when iOnlySeat is set. A closed seat is
 //skipped rather than written to; WiFiClient::write on a dead client is a silent no-op.
+//⛔ Seats are INDEPENDENT: a seat that misses its budget is counted and skipped, and can
+//never delay or suppress the seats after it in the array. One bad viewer costs the others
+//nothing but its own budget slice.
 void TelnetClientPrint::fanout(const uint8_t * buffer, size_t size)
 {
 	if(iOnlySeat>=0)
 	{
-		if(pDest[iOnlySeat].connected()) pDest[iOnlySeat].write(buffer,size);
+		if(pDest[iOnlySeat].connected())
+		{
+			TelnetSeatWrite(pDest[iOnlySeat],buffer,size);
+		}
 		return;
 	}
 
 	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
 	{
-		if(pDest[i] && pDest[i].connected()) pDest[i].write(buffer,size);
+		if(!(pDest[i] && pDest[i].connected()))
+		{
+			continue;
+		}
+
+		if(TelnetSeatWrite(pDest[i],buffer,size))
+		{
+			uTelnetSeatStalls[i]=0;
+			continue;
+		}
+
+		if(++uTelnetSeatStalls[i]<LEIFTELNET_STALL_STRIKES)
+		{
+			continue;
+		}
+
+		//Out of patience. Tell the viewer to its face why it is going -- one bounded
+		//attempt, best effort, since by definition this socket is barely accepting -- then
+		//stop() it. LeifLoop's departure sweep reports it to everyone else on the next pass.
+		//⛔ Do NOT csprintf() the notice from here: that re-enters this very function.
+		static const char szBump[]="\r\n*** Disconnecting this console: it is not keeping up with the output. ***\r\n";
+		TelnetSeatWrite(pDest[i],(const uint8_t *) szBump,sizeof(szBump)-1);
+		pDest[i].stop();
+		uTelnetSeatStalls[i]=0;
+		bTelnetSeatBumped[i]=true;
 	}
 }
 
@@ -2165,8 +2244,20 @@ void LeifLoop()
 			strTelnetCmdBuffer[i]="";
 			iTelnetNegotiate[i]=0;
 			if(telnetClientCount) telnetClientCount--;
-			csprintf(PSTR("Telnet client disconnected. %u of %u seats in use.\n"),
-					(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
+			//⛔ Say WHY when we were the ones who ended it. A viewer bumped for not keeping
+			//up looks identical to a network drop from the remaining seats, and the whole
+			//point of bumping rather than dropping lines is that the reason is visible.
+			if(bTelnetSeatBumped[i])
+			{
+				bTelnetSeatBumped[i]=false;
+				csprintf(PSTR("Telnet client DISCONNECTED BY US -- it was not reading fast enough to keep up. %u of %u seats in use.\n"),
+						(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
+			}
+			else
+			{
+				csprintf(PSTR("Telnet client disconnected. %u of %u seats in use.\n"),
+						(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
+			}
 		}
 	}
 
