@@ -61,7 +61,15 @@ public:
 
 	WiFiClient * pDest;		//the seat array, LEIF_TELNET_MAX_CLIENTS long
 
-	int8_t iOnlySeat=-1;	//-1 = every occupied seat; >=0 = that seat alone (welcome + scrollback)
+	//⛔ This is now the ONLY way to use this class, and it must always be >=0 while writing.
+	//Ordinary console output does not come through here at all any more -- it goes into
+	//scrollbackBuffer and the seats read themselves out of that. What is left is the welcome
+	//banner, which is the one thing that is addressed to a single newcomer and must therefore
+	//NOT go into the shared stream. A write with iOnlySeat still -1 is a bug, and is dropped.
+	int8_t iOnlySeat=-1;
+
+	//The whole banner shares ONE budget, not one per write. See the note on fanout().
+	uint32_t ulBannerDeadline=0;
 
 	uint32_t cbcounter=0;
 

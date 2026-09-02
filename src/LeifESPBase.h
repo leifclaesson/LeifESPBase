@@ -39,6 +39,17 @@ extern const char * backup_key;
 
 #define HAS_CSPRINTF
 
+//The console's one buffer, and since 2026-09-03 it is not just scrollback: it is the
+//DELIVERY QUEUE every telnet seat reads from. Each seat keeps its own position in this
+//stream (LeifESPBaseMain.cpp, uTelnetSeatSent) and is fed from here at whatever rate its
+//socket will take, so a print costs no socket time at all and a slow viewer holds nobody
+//up. See the block above TelnetDrainSeats() for the whole arrangement.
+//
+//Positions are ABSOLUTE stream offsets (Head() counts every byte ever written), not ring
+//indices, so a seat's position stays meaningful across any number of wraps.
+//
+//⛔ Bytes go in with CRLF line endings, because what comes out goes straight down a
+//telnet socket with no pass over it. write() does the LF -> CRLF conversion on the way in.
 class ScrollbackBuffer : public Print
 {
 public:
@@ -53,13 +64,28 @@ public:
     const char * dataSecond();
     size_t sizeSecond();
 
+    //--- the stream view, used by the telnet seats ---
+    uint32_t Head() const { return total; }				//absolute offset one past the newest byte
+    uint32_t Oldest() const { return total-kept; }		//absolute offset of the oldest byte still held
+    uint16_t Capacity() const { return bufsize; }
+
+    //Hands back a pointer to the bytes at absolute offset pos and how many of them are
+    //contiguous from there (the ring wraps, so a caller asking for a long run gets it in
+    //at most two goes). Returns 0 when pos has already fallen off the tail, or is at the
+    //head with nothing new behind it.
+    size_t Peek(uint32_t pos, const char * & data) const;
+
 private:
+
+	void RawAppend(const uint8_t * buffer, size_t size);
 
 	char * buf=NULL;
 
 	uint16_t bufsize=0;
 	uint16_t kept=0;
 	uint16_t idx=0;
+	uint32_t total=0;	//every byte ever written, so a seat's position never has to chase a wrap
+	char lastch=0;		//so an already-CRLF source does not come out as CR CR LF
 
 
 };
@@ -111,12 +137,15 @@ private:
 
 #ifdef NO_SERIAL_DEBUG
 #ifdef USE_SERIAL1_DEBUG
-#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); scrollbackBuffer.printf(__VA_ARGS__); }
 #else
-#define csprintf(...) { if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+#define csprintf(...) { scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 #else
-#define csprintf(...) { Serial.printf(__VA_ARGS__ ); if(telnetClientCount) telnetprint.printf(__VA_ARGS__); scrollbackBuffer.printf(__VA_ARGS__); }
+//⛔ The telnet half USED to be here as a second printf straight at the sockets. It is gone
+//on purpose: scrollbackBuffer IS the telnet path now, and printing it twice would double every
+//console line. A console line costs one format and one memcpy; no socket is touched.
+#define csprintf(...) { Serial.printf(__VA_ARGS__ ); scrollbackBuffer.printf(__VA_ARGS__); }
 #endif
 
 #if defined(ARDUINO_ARCH_ESP8266)

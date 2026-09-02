@@ -281,6 +281,50 @@ void ScrollbackBuffer::alloc(uint16_t bytes)
 
 }
 
+//Raw ring append -- no line-ending handling, no bookkeeping beyond the ring's own.
+void ScrollbackBuffer::RawAppend(const uint8_t * buffer, size_t size)
+{
+	if(!buf || !size)
+	{
+		return;
+	}
+
+	lastch = (char) buffer[size-1];
+	total += size;
+
+	//A write longer than the whole ring can only ever leave its LAST bufsize bytes, so skip
+	//straight to those rather than memcpy()ing the doomed prefix through the buffer first.
+	if(size >= bufsize)
+	{
+		buffer += size-bufsize;
+		size = bufsize;
+		idx = 0;
+	}
+
+	while(size)
+	{
+		uint16_t bytes_now = size;
+		if(bytes_now > (uint16_t)(bufsize - idx))
+		{
+			bytes_now = bufsize - idx;
+		}
+		memcpy(&buf[idx], buffer, bytes_now);
+		size -= bytes_now;
+		buffer += bytes_now;
+		idx += bytes_now;
+		idx %= bufsize;
+
+		//⛔ This used to read "kept += bufsize", which made the buffer claim to be FULL after
+		//the very first multi-byte print -- so the first viewer to connect was replayed up to a
+		//whole buffer of the zeros alloc() memset in, ahead of the real text.
+		kept += bytes_now;
+		if(kept > bufsize)
+		{
+			kept = bufsize;
+		}
+	}
+}
+
 size_t ScrollbackBuffer::write(uint8_t value)
 {
 	if(!buf)
@@ -288,17 +332,20 @@ size_t ScrollbackBuffer::write(uint8_t value)
 		return 1;
 	}
 
-	buf[idx++] = value;
-	idx %= bufsize;
-	kept++;
-	if(kept > bufsize)
+	if(value=='\n' && lastch!='\r')
 	{
-		kept = bufsize;
+		RawAppend((const uint8_t *) "\r\n",2);
+		return 1;
 	}
+
+	RawAppend(&value,1);
 
 	return 1;
 }
 
+//LF -> CRLF on the way IN, because the bytes in here are handed to telnet sockets verbatim
+//and nothing downstream looks at them again. A source that already writes CRLF is left alone
+//rather than turned into CR CR LF.
 size_t ScrollbackBuffer::write(const uint8_t * buffer, size_t writesize)
 {
 	if(!buf)
@@ -306,33 +353,56 @@ size_t ScrollbackBuffer::write(const uint8_t * buffer, size_t writesize)
 		return writesize;
 	}
 
+	size_t begin=0;
 
-	size_t remaining = writesize;
-
-	//Serial.printf("WRITE %u\n",remaining);
-
-	while(remaining)
+	for(size_t i=0;i<writesize;i++)
 	{
-		uint16_t bytes_now = remaining;
-		if(bytes_now > (size_t)(bufsize - idx))
+		if(buffer[i]!='\n')
 		{
-			bytes_now = bufsize - idx;
+			continue;
 		}
-		//csprintf("copy %i bytes to buffer at idx %i",bytes_now,idx);
-		memcpy(&buf[idx], buffer, bytes_now);
-		remaining -= bytes_now;
-		buffer += bytes_now;
-		idx += bytes_now;
-		//Serial.printf("idx %u\n",idx);
-		idx %= bufsize;
-		kept += bufsize;
-		if(kept > bufsize)
+
+		RawAppend(&buffer[begin],i-begin);
+		if(i>begin ? buffer[i-1]!='\r' : lastch!='\r')
 		{
-			kept = bufsize;
+			RawAppend((const uint8_t *) "\r",1);
 		}
+		RawAppend((const uint8_t *) "\n",1);
+		begin=i+1;
 	}
 
+	RawAppend(&buffer[begin],writesize-begin);
+
 	return writesize;
+}
+
+//Bytes at absolute offset pos, and how many run on contiguously from there.
+size_t ScrollbackBuffer::Peek(uint32_t pos, const char * & data) const
+{
+	data=NULL;
+
+	if(!buf || !bufsize)
+	{
+		return 0;
+	}
+
+	//Signed differences throughout, so this keeps working after total wraps past 2^32.
+	if((int32_t)(pos-Oldest())<0 || (int32_t)(total-pos)<=0)
+	{
+		return 0;
+	}
+
+	uint32_t behind=total-pos;					//how far back from the write head pos sits
+	uint16_t off=(uint16_t)(((uint32_t)idx+bufsize-(behind%bufsize))%bufsize);
+	size_t contiguous=bufsize-off;
+	if(contiguous>behind)
+	{
+		contiguous=behind;
+	}
+
+	data=&buf[off];
+
+	return contiguous;
 }
 
 const char * ScrollbackBuffer::dataFirst()
@@ -387,98 +457,209 @@ uint8_t telnetClientCount=0;
 TelnetClientPrint telnetprint(telnetClients);
 
 //A console viewer that stops reading must never become the PRODUCT's problem. The stock
-//WiFiClient::write blocks in select() for a full second whenever the peer's receive window
-//is shut, and this is called once PER LINE -- so one wedged viewer stalls loopTask for as
-//long as there is backlog, starves the idle task, and the task watchdog reboots the board.
-//Measured on a Lightbulb 2026-09-03: a Bluetooth inquiry's console burst plus one telnet
-//client that never reads = SW_CPU_RESET three seconds later, reproducible on demand. It
-//stalled the MQTT publish in the same pass, so this was never console-only damage.
+//THE CONSOLE'S DELIVERY MODEL, and why it is not the obvious one.
+//
+//It used to be: every console line was written straight at every telnet seat, blocking.
+//WiFiClient::write parks in select() for a full second whenever the peer's receive window is
+//shut, and that is per line -- so one wedged viewer stalled loopTask for as long as there was
+//backlog, starved the idle task, and the task watchdog rebooted the board. Measured on a
+//Lightbulb 2026-09-03: a Bluetooth inquiry's console burst plus one telnet client that never
+//reads = SW_CPU_RESET three seconds later, on demand. It stalled the MQTT publish in the same
+//pass, so this was never console-only damage.
 //
 //⛔ The answer is NOT to drop lines. //Leif, 2026-09-03: "a console that loses lines is
-//bad... it would almost be better to disconnect because, well, warn in the console that
-//hey, disconnect it because you're not keeping up." So a seat either receives everything
-//or is BUMPED and told why -- there is never a silent gap for a reader to mistrust.
-#ifndef LEIFTELNET_WRITE_BUDGET_MS
-#define LEIFTELNET_WRITE_BUDGET_MS 20	//per seat, per line. A healthy LAN peer is writable immediately, so this is not a delay -- it is the ceiling on how much of loopTask one seat may cost.
-#endif
-#ifndef LEIFTELNET_STALL_STRIKES
-#define LEIFTELNET_STALL_STRIKES 25	//consecutive missed budgets before the seat is bumped -- half a second of failing to keep up, not one hiccup.
-#endif
+//bad... it would almost be better to disconnect because, well, warn in the console that hey,
+//disconnect it because you're not keeping up."
+//
+//⛔ Nor is it to disconnect a seat the moment it misses a write, which is what the first
+//attempt at this did. //Leif, 2026-09-03: "what if there's a temporary hiccup? Then we're just
+//gonna keep dropping consoles, that'll be annoying. And the fact is we already have a ring
+//buffer, the one that we use for the console, for the scroll back... so all we have to do is
+//to have separate pointers for each client. To how far they have been sent in that buffer.
+//That way we don't have to kick a client until the part that is still unsent is about to get
+//bumped out of the buffer due to a new print."
+//
+//⭐ So that is the model, and it costs no new memory:
+//
+//  - csprintf() writes ONLY to scrollbackBuffer. No socket is touched while printing, so a
+//    print is a memcpy and can never block loopTask no matter how many seats are wedged.
+//  - each seat holds an absolute position in that stream (uTelnetSeatSent).
+//  - TelnetDrainSeats(), once per LeifLoop pass, hands each seat whatever its socket will take
+//    RIGHT NOW and advances only by what was actually accepted. Nothing ever waits.
+//  - a hiccup is therefore free: a viewer that goes quiet for a moment simply falls behind and
+//    catches up, and the buffer is exactly the slack it is allowed.
+//  - a seat is bumped ONLY when its unsent bytes have been overwritten by newer output, i.e.
+//    it fell a whole buffer behind. Then it is told why, because a viewer that is silently
+//    missing lines is worse than one that knows it was disconnected.
+//
+//A seat therefore either receives every byte in order or is disconnected with a stated reason.
+//There is never a silent gap for a reader to mistrust.
 
-uint16_t uTelnetSeatStalls[LEIF_TELNET_MAX_CLIENTS]={0};
+uint32_t uTelnetSeatSent[LEIF_TELNET_MAX_CLIENTS]={0};	//absolute stream position each seat has been fed to
+uint32_t uTelnetSeatFloor[LEIF_TELNET_MAX_CLIENTS]={0};	//where LIVE output began for that seat -- everything before it is replay
 bool bTelnetSeatBumped[LEIF_TELNET_MAX_CLIENTS]={false};	//read by LeifLoop's departure sweep, so the disconnect line can say WHY
 
-//One seat, bounded. Returns false when the seat did not accept the write inside its budget.
-//⛔ The worst case for the caller is (occupied seats x budget), never the slowest peer's
-//TCP window -- that unbounded wait is the whole bug this exists to remove.
-static bool TelnetSeatWrite(WiFiClient & client, const uint8_t * buffer, size_t size)
+//The whole welcome banner's budget, not one write's. It is spent only by a newcomer whose
+//socket will not take its own greeting, and the seat is dropped the moment it runs out.
+#ifndef LEIFTELNET_BANNER_BUDGET_MS
+#define LEIFTELNET_BANNER_BUDGET_MS 100
+#endif
+
+
+//As much of buffer as this seat's socket will take within uBudgetMs; returns how many went.
+//⛔ The drain passes a budget of ZERO, so the worst case there is a syscall and never a
+//peer's TCP window -- that unbounded wait is the whole bug this exists to remove. The write is
+//capped at 1 MSS for the same reason LeifWebServer::BoundedClientWrite caps it: select reports
+//writable only with at least an MSS free, so a <=1 MSS write is taken in one shot and write()
+//cannot drop into its own 1-second-per-retry loop underneath us.
+//
+//⚠ A zero budget really does mean "right now", and lwIP is stricter about that than it
+//looks: its writable flag is raised by the TCP sent callback, so back-to-back small writes go
+//not-writable after the first one or two until the peer ACKs. That is harmless for the drain,
+//which simply continues on the next loop pass -- but it silently truncated the welcome banner,
+//which has no next pass. Hence the budget, and hence the banner having one at all.
+static size_t TelnetSeatSendNow(WiFiClient & client, const char * buffer, size_t size, uint32_t uBudgetMs=0)
 {
 	int sockfd=client.fd();
-	if(sockfd<0)
+	if(sockfd<0 || !size)
 	{
-		return true;	//no socket -> nothing is owed to this seat, and it is not stalling
+		return 0;
+	}
+
+	if(size>1436)
+	{
+		size=1436;
 	}
 
 	fd_set setWrite;
 	FD_ZERO(&setWrite);
 	FD_SET(sockfd,&setWrite);
-	struct timeval tv={ LEIFTELNET_WRITE_BUDGET_MS/1000, (LEIFTELNET_WRITE_BUDGET_MS%1000)*1000 };
-	if(select(sockfd+1,nullptr,&setWrite,nullptr,&tv)<=0)
+	struct timeval tv={ (time_t)(uBudgetMs/1000), (suseconds_t)((uBudgetMs%1000)*1000) };
+	int r=select(sockfd+1,nullptr,&setWrite,nullptr,&tv);
+	if(!(r>0 && FD_ISSET(sockfd,&setWrite)))
 	{
-		return false;
-	}
-	if(!FD_ISSET(sockfd,&setWrite))
-	{
-		return false;
+		return 0;
 	}
 
-	return client.write(buffer,size)>0;
+	return client.write((const uint8_t *) buffer,size);
 }
 
-//Writes to every occupied seat, or to just one when iOnlySeat is set. A closed seat is
-//skipped rather than written to; WiFiClient::write on a dead client is a silent no-op.
-//⛔ Seats are INDEPENDENT: a seat that misses its budget is counted and skipped, and can
-//never delay or suppress the seats after it in the array. One bad viewer costs the others
-//nothing but its own budget slice.
+//One pass over the seats: feed each one from the console stream, then bump any seat whose
+//unsent bytes have actually been overwritten. Called once per LeifLoop pass.
+void TelnetDrainSeats(void)
+{
+	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
+	{
+		if(!(telnetClients[i] && telnetClients[i].connected()))
+		{
+			continue;
+		}
+
+		//Feed it. The ring wraps, so a seat that is a long way behind needs more than one go;
+		//two is always enough for one wrap, and the cap keeps a pathological case bounded.
+		for(int pass=0;pass<3;pass++)
+		{
+			const char * data=NULL;
+			size_t avail=scrollbackBuffer.Peek(uTelnetSeatSent[i],data);
+			if(!avail)
+			{
+				break;
+			}
+
+			size_t sent=TelnetSeatSendNow(telnetClients[i],data,avail);
+			if(!sent)
+			{
+				break;		//window shut -- it is behind, not broken. It catches up next pass.
+			}
+			uTelnetSeatSent[i]+=sent;
+		}
+
+		//⛔ The bump test is LOSS, not slowness. A seat only gets here once newer output has
+		//overwritten bytes it had not been given yet, which takes a whole buffer of backlog --
+		//so a viewer that merely stalls for a moment is never touched.
+		uint32_t ulOldest=scrollbackBuffer.Oldest();
+		if((int32_t)(uTelnetSeatSent[i]-ulOldest)>=0)
+		{
+			continue;
+		}
+
+		//⭐ Something was overwritten, but WHICH bytes decides whether that is a fault. A seat
+		//starts at the oldest byte in the buffer, so it begins life a full buffer behind and the
+		//very next print would otherwise evict something it had not been handed yet -- which
+		//bumped every newcomer on the spot the first time this was written. Everything before
+		//uTelnetSeatFloor is scrollback the seat was never promised: losing that is just the
+		//backfill scrolling away under it, so it skips ahead and reads on. Only once the buffer
+		//has cycled past the moment it CONNECTED has it missed something live.
+		if((int32_t)(ulOldest-uTelnetSeatFloor[i])<=0)
+		{
+			uTelnetSeatSent[i]=ulOldest;
+			continue;
+		}
+
+		//Tell the viewer to its face why it is going -- best effort, since by definition this
+		//socket is barely accepting -- then stop() it. LeifLoop's departure sweep reports it to
+		//everyone else on the next pass.
+		//⛔ Do NOT csprintf() the notice from here: it would land in the very stream this
+		//loop is walking, which is a fine way to write an infinite console.
+		//⚠ This one deliberately does NOT go through TelnetSeatSendNow, because that asks
+		//select() whether the socket is writable and by definition this is the one socket where
+		//the answer is no -- measured 2026-09-03, first with no budget and then with 50 ms: the
+		//seat was closed correctly both times and the viewer was never told a thing, which is
+		//the half of the bargain that makes bumping better than dropping lines. A bare
+		//MSG_DONTWAIT send takes whatever room is left in lwIP's own send buffer even while the
+		//peer's window is shut, so a merely SLOW viewer gets the notice as soon as it reads
+		//again. It cannot block: MSG_DONTWAIT returns rather than waiting.
+		//⛔ Genuinely best effort even so. A viewer that has stopped reading altogether cannot
+		//be told anything, which is why the board's own console says it too -- the
+		//DISCONNECTED BY US line in the departure sweep below is the guaranteed surface.
+		static const char szBump[]="\r\n*** Disconnecting this console: it fell so far behind that output was lost. ***\r\n";
+		int sockfd=telnetClients[i].fd();
+		if(sockfd>=0)
+		{
+			send(sockfd,szBump,sizeof(szBump)-1,MSG_DONTWAIT);
+		}
+		telnetClients[i].stop();
+		bTelnetSeatBumped[i]=true;
+	}
+}
+
+//The welcome banner, and nothing else -- see the note on iOnlySeat in the header. This is the
+//one piece of console text addressed to a single newcomer, so it cannot go through the shared
+//stream; it is written straight at that seat instead.
+//
+//⛔ ulBannerDeadline is the budget for the WHOLE banner, not for each of the ~20 little
+//writes it arrives in. Per-write budgets multiply, and a per-write budget big enough to be
+//useful would let one wedged newcomer hold loopTask for the sum of them.
+//
+//⭐ And a banner that does not fit costs the seat, immediately. Everywhere else a seat that
+//falls behind is simply fed later out of the buffer -- but the banner is not in the buffer and
+//never will be, so a short write here is a hole that can never be filled. Rather than leave a
+//viewer reading a truncated greeting, the seat goes and the drain's departure sweep says why.
 void TelnetClientPrint::fanout(const uint8_t * buffer, size_t size)
 {
-	if(iOnlySeat>=0)
+	if(iOnlySeat<0)
 	{
-		if(pDest[iOnlySeat].connected())
-		{
-			TelnetSeatWrite(pDest[iOnlySeat],buffer,size);
-		}
 		return;
 	}
 
-	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
+	if(!pDest[iOnlySeat].connected())
 	{
-		if(!(pDest[i] && pDest[i].connected()))
-		{
-			continue;
-		}
-
-		if(TelnetSeatWrite(pDest[i],buffer,size))
-		{
-			uTelnetSeatStalls[i]=0;
-			continue;
-		}
-
-		if(++uTelnetSeatStalls[i]<LEIFTELNET_STALL_STRIKES)
-		{
-			continue;
-		}
-
-		//Out of patience. Tell the viewer to its face why it is going -- one bounded
-		//attempt, best effort, since by definition this socket is barely accepting -- then
-		//stop() it. LeifLoop's departure sweep reports it to everyone else on the next pass.
-		//⛔ Do NOT csprintf() the notice from here: that re-enters this very function.
-		static const char szBump[]="\r\n*** Disconnecting this console: it is not keeping up with the output. ***\r\n";
-		TelnetSeatWrite(pDest[i],(const uint8_t *) szBump,sizeof(szBump)-1);
-		pDest[i].stop();
-		uTelnetSeatStalls[i]=0;
-		bTelnetSeatBumped[i]=true;
+		return;
 	}
+
+	int32_t iLeftMs=(int32_t)(ulBannerDeadline-millis());	//signed, so this survives the millis() wrap
+	if(iLeftMs<0)
+	{
+		iLeftMs=0;
+	}
+
+	if(TelnetSeatSendNow(pDest[iOnlySeat],(const char *) buffer,size,(uint32_t) iLeftMs)>=size)
+	{
+		return;
+	}
+
+	pDest[iOnlySeat].stop();
+	bTelnetSeatBumped[iOnlySeat]=true;
 }
 
 size_t TelnetClientPrint::write(uint8_t value)
@@ -1018,6 +1199,14 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 #endif
 #endif
 
+	//⛔ Not optional any more, and a zero here used to be legal. Since 2026-09-03 this buffer
+	//is what every telnet seat is fed FROM, so a console with no buffer would be a console that
+	//can deliver nothing. Every project in the tree already asks for 1024-16384; the floor only
+	//catches a caller that took the default.
+	if(_scrollback_bytes<512)
+	{
+		_scrollback_bytes=512;
+	}
 	scrollbackBuffer.alloc(_scrollback_bytes);
 
 	bConsoleInitDone = true;
@@ -2233,6 +2422,10 @@ void LeifLoop()
 		}
 	}
 
+	//Feed the seats before anything else looks at them, so a seat bumped for losing output is
+	//reaped and announced by the sweep immediately below rather than a pass later.
+	TelnetDrainSeats();
+
 	//Sweep for departures FIRST, and every pass -- the old single-seat code only checked
 	//this when no new client was pending, so a seat freed in the same pass looked taken.
 	for(int i=0;i<LEIF_TELNET_MAX_CLIENTS;i++)
@@ -2250,7 +2443,7 @@ void LeifLoop()
 			if(bTelnetSeatBumped[i])
 			{
 				bTelnetSeatBumped[i]=false;
-				csprintf(PSTR("Telnet client DISCONNECTED BY US -- it was not reading fast enough to keep up. %u of %u seats in use.\n"),
+				csprintf(PSTR("Telnet client DISCONNECTED BY US -- it fell a whole console buffer behind and output was lost. %u of %u seats in use.\n"),
 						(unsigned) telnetClientCount, (unsigned) LEIF_TELNET_MAX_CLIENTS);
 			}
 			else
@@ -2290,6 +2483,7 @@ void LeifLoop()
 
 			//Welcome banner and scrollback go to the NEWCOMER only; everyone already
 			//seated has seen the scrollback and does not want it replayed at them.
+			telnetprint.ulBannerDeadline=millis()+LEIFTELNET_BANNER_BUDGET_MS;
 			telnetprint.iOnlySeat=seat;
 
 			telnetprint.printf("\n");
@@ -2315,8 +2509,13 @@ void LeifLoop()
 			Serial1.printf(PSTR("New telnet connection from %s, uptime %s\n"), telnetClients[seat].remoteIP().toString().c_str(), strUptime.c_str());
 #endif
 
-			telnetprint.write((const uint8_t *) scrollbackBuffer.dataFirst(), scrollbackBuffer.sizeFirst());
-			telnetprint.write((const uint8_t *) scrollbackBuffer.dataSecond(), scrollbackBuffer.sizeSecond());
+			//⭐ The scrollback replay is not written here any more. Pointing the seat at the
+			//oldest byte still held IS the replay: TelnetDrainSeats() feeds it from there at
+			//whatever rate the socket takes, and everything printed from now on simply follows
+			//it in the same stream. So the replay costs one assignment, cannot block, and a
+			//newcomer that never reads is bumped by the same rule as everybody else.
+			uTelnetSeatSent[seat]=scrollbackBuffer.Oldest();
+			uTelnetSeatFloor[seat]=scrollbackBuffer.Head();		//live output for this seat starts here
 
 			telnetprint.iOnlySeat=-1;
 
