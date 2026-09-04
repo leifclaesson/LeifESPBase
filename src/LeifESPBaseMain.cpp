@@ -6,7 +6,11 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>		//esp_reset_reason()
 #include <esp_wifi.h>		//esp_wifi_set_country() -- regulatory domain so channel 13 is scannable/joinable
-#include <esp_mac.h>		//esp_read_mac() -- the eFuse MAC, readable before the STA netif exists
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 2)
+#include <esp_mac.h>		//esp_read_mac() -- the eFuse MAC, readable before the STA netif exists.
+						//⛔ 1.0.6 does not ship this header at all, and the absence of
+						//ESP_ARDUINO_VERSION_MAJOR (esp_arduino_version.h, core 2.0.0+) is the test.
+#endif
 #include <lwip/sockets.h>	//select()/fd_set for LeifWebServer's bounded non-blocking response write (below)
 #endif
 
