@@ -6,6 +6,7 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>		//esp_reset_reason()
 #include <esp_wifi.h>		//esp_wifi_set_country() -- regulatory domain so channel 13 is scannable/joinable
+#include <esp_mac.h>		//esp_read_mac() -- the eFuse MAC, readable before the STA netif exists
 #include <lwip/sockets.h>	//select()/fd_set for LeifWebServer's bounded non-blocking response write (below)
 #endif
 
@@ -433,6 +434,57 @@ size_t ScrollbackBuffer::sizeSecond()
 
 ScrollbackBuffer scrollbackBuffer;
 
+//The console's one formatting pass -- see the block above its declaration in LeifESPBase.h for
+//why it stopped being a macro. Buffer strategy is Print::printf_P's own: 64 bytes of stack,
+//heap only for a line that overruns it. Both sinks are then handed the SAME bytes, so a line
+//costs one vsnprintf where the macro spent one per sink.
+void csprintf(PGM_P fmt, ...)
+{
+	va_list arg;
+	char temp[64];
+	char * buffer=temp;
+
+	va_start(arg,fmt);
+	int len=vsnprintf_P(temp,sizeof(temp),fmt,arg);
+	va_end(arg);
+
+	if(len<=0)
+	{
+		return;
+	}
+
+	if((size_t) len > sizeof(temp)-1)
+	{
+		buffer=(char *) malloc(len+1);
+		if(!buffer)
+		{
+			return;
+		}
+		va_start(arg,fmt);
+		vsnprintf_P(buffer,len+1,fmt,arg);
+		va_end(arg);
+	}
+
+#ifdef NO_SERIAL_DEBUG
+#ifdef USE_SERIAL1_DEBUG
+	Serial1.write((const uint8_t *) buffer,len);
+	Serial1.flush();
+#endif
+#else
+	Serial.write((const uint8_t *) buffer,len);
+#endif
+
+	//⛔ The telnet half is NOT a second write at the sockets. scrollbackBuffer IS the telnet
+	//path -- every seat reads out of it at its own pace -- so a console line costs one format
+	//and one memcpy, and no socket is touched here.
+	scrollbackBuffer.write((const uint8_t *) buffer,len);
+
+	if(buffer!=temp)
+	{
+		free(buffer);
+	}
+}
+
 bool bLedOverride=false;
 int iLedOverride=0;
 
@@ -518,8 +570,62 @@ bool bTelnetSeatBumped[LEIF_TELNET_MAX_CLIENTS]={false};	//read by LeifLoop's de
 //not-writable after the first one or two until the peer ACKs. That is harmless for the drain,
 //which simply continues on the next loop pass -- but it silently truncated the welcome banner,
 //which has no next pass. Hence the budget, and hence the banner having one at all.
+//⛔ The ESP8266 has no socket to select() on: its WiFiClient wraps a ClientContext, not an
+//lwIP fd, so the arm below is the same contract reached a different way. availableForWrite() is
+//tcp_sndbuf() read straight off the pcb -- the writable test itself, with no syscall and no
+//wait -- and ClientContext::write only parks in its delay(1) retry loop when it is handed MORE
+//than that room. Hand it exactly what already fits and it returns on the first pass.
+//⚠ The two budgets mean different things and that is deliberate, not an oversight: the drain
+//(budget 0) takes a SHORT write happily, because the seat resumes at whatever position it
+//reached and catches up next pass -- refusing partial writes there would starve a seat whose
+//peer keeps a small window open and then bump it for "loss" it never suffered. The banner
+//(budget > 0) has no next pass, so it waits for the whole line to fit and otherwise writes
+//nothing, which is what costs that seat its greeting and its seat.
 static size_t TelnetSeatSendNow(WiFiClient & client, const char * buffer, size_t size, uint32_t uBudgetMs=0)
 {
+#if defined(ARDUINO_ARCH_ESP8266)
+
+	if(!size || !client.connected())
+	{
+		return 0;
+	}
+
+	if(size>1436)
+	{
+		size=1436;
+	}
+
+	size_t room=client.availableForWrite();
+
+	if(uBudgetMs)
+	{
+		uint32_t ulStart=millis();
+		while(room<size && (millis()-ulStart)<uBudgetMs)
+		{
+			delay(1);
+			room=client.availableForWrite();
+		}
+
+		if(room<size)
+		{
+			return 0;
+		}
+	}
+
+	if(!room)
+	{
+		return 0;
+	}
+
+	if(size>room)
+	{
+		size=room;
+	}
+
+	return client.write((const uint8_t *) buffer,size);
+
+#else
+
 	int sockfd=client.fd();
 	if(sockfd<0 || !size)
 	{
@@ -542,6 +648,8 @@ static size_t TelnetSeatSendNow(WiFiClient & client, const char * buffer, size_t
 	}
 
 	return client.write((const uint8_t *) buffer,size);
+
+#endif
 }
 
 //One pass over the seats: feed each one from the console stream, then bump any seat whose
@@ -613,11 +721,22 @@ void TelnetDrainSeats(void)
 		//be told anything, which is why the board's own console says it too -- the
 		//DISCONNECTED BY US line in the departure sweep below is the guaranteed surface.
 		static const char szBump[]="\r\n*** Disconnecting this console: it fell so far behind that output was lost. ***\r\n";
+#if defined(ARDUINO_ARCH_ESP8266)
+		//Same bargain without a socket to reach past the client with: whatever lwIP's send
+		//buffer will take this instant it takes without waiting, so a merely SLOW viewer still
+		//gets told. One that has stopped reading has no room left and hears nothing, which is
+		//the case the DISCONNECTED BY US line below exists to cover.
+		if(telnetClients[i].availableForWrite()>=(int)(sizeof(szBump)-1))
+		{
+			telnetClients[i].write((const uint8_t *) szBump,sizeof(szBump)-1);
+		}
+#else
 		int sockfd=telnetClients[i].fd();
 		if(sockfd>=0)
 		{
 			send(sockfd,szBump,sizeof(szBump)-1,MSG_DONTWAIT);
 		}
+#endif
 		telnetClients[i].stop();
 		bTelnetSeatBumped[i]=true;
 	}
@@ -1384,7 +1503,24 @@ void LeifSetupBegin()
 
 	csprintf(PSTR("WiFi: %s\n"), LeifGetAllowWifiConnection()?PSTR("ENABLED"):PSTR("DISABLED"));
 	csprintf(PSTR("Using WiFi SSID: %s\n"), wifi_ssid);
+#if defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR >= 3
+	//⛔ NOT WiFi.macAddress() this early. On core 3.x that resolves to
+	//NetworkInterface::macAddress(), which zero-fills a local buffer, asks the STA netif, and
+	//then IGNORES the failure -- so when the netif is not registered yet it renders a
+	//perfectly-formatted "00:00:00:00:00:00" and says nothing (its log_e is compiled out at
+	//CORE_DEBUG_LEVEL=0). WiFi.mode(WIFI_STA) above registers that netif asynchronously, so how
+	//this line came out depended on how long the console lines between the two took -- the same
+	//call at /sysinfo time is always correct, which is why the page and the boot log disagreed.
+	//The station MAC lives in eFuse and esp_read_mac() reads it with no netif and no radio.
+	{
+		uint8_t mac[6]={0,0,0,0,0,0};
+		esp_read_mac(mac, ESP_MAC_WIFI_STA);
+		csprintf(PSTR("MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n"),
+			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	}
+#else
 	csprintf(PSTR("MAC address: %s\n"), WiFi.macAddress().c_str());
+#endif
 	csprintf(PSTR("Host name: %s\n"), GetHostName());
 
 #if defined(ARDUINO_ARCH_ESP32)

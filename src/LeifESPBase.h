@@ -135,18 +135,19 @@ private:
 #endif
 #endif
 
-#ifdef NO_SERIAL_DEBUG
-#ifdef USE_SERIAL1_DEBUG
-#define csprintf(...) { Serial1.printf(__VA_ARGS__ ); Serial1.flush(); scrollbackBuffer.printf(__VA_ARGS__); }
-#else
-#define csprintf(...) { scrollbackBuffer.printf(__VA_ARGS__); }
-#endif
-#else
-//⛔ The telnet half USED to be here as a second printf straight at the sockets. It is gone
-//on purpose: scrollbackBuffer IS the telnet path now, and printing it twice would double every
-//console line. A console line costs one format and one memcpy; no socket is touched.
-#define csprintf(...) { Serial.printf(__VA_ARGS__ ); scrollbackBuffer.printf(__VA_ARGS__); }
-#endif
+//The console. This was a macro until 2026-09-03, and a macro pasted its format string once per
+//printf in its body -- so PSTR() declared a fresh copy each time and every console line sat in
+//flash two or three times over. //Leif, 2026-09-03: "could you rework that macro so that it
+//calls a function call? That will be safer and more stable for the future."
+//One function, one copy, both sinks fed from a single formatting pass. WHICH sinks is decided in
+//LeifESPBaseMain.cpp, under the same NO_SERIAL_DEBUG / USE_SERIAL1_DEBUG switches that used to
+//pick between the three macro bodies.
+//⛔ PGM_P and vsnprintf_P, not const char*/vsnprintf: the format string lives in flash, and only
+//the _P family reads it word-at-a-time. Plain printf works, but takes an unaligned-access
+//exception per byte on the hottest logging path there is.
+//⛔ Keep the format attribute. Print::printf carried one, so argument type-checking is free
+//today and vanishes without a sound the moment the macro does.
+void csprintf(PGM_P fmt, ...) __attribute__((format(printf, 1, 2)));
 
 #if defined(ARDUINO_ARCH_ESP8266)
 extern ESP8266WebServer server;
