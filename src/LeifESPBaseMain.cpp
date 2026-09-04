@@ -67,6 +67,9 @@ void LeifSetOtaTooLargeCallback(fn_LeifESPBaseOtaTooLargeCallback cb) { g_cbOtaT
 
 #include <esp_task_wdt.h>
 
+#include "esp_partition.h"	//the live partition table, reported on /sysinfo
+#include "esp_ota_ops.h"	//which slot we are running from, and which one an OTA would land in
+
 #include "core_version.h"
 
 unsigned short usLEDLogTable256[256] =
@@ -1791,6 +1794,72 @@ void LeifSetupBegin()
 		s += temp;
 		sprintf(temp, PSTR("Flash ide mode...: %s\n\n"), (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : PSTR("UNKNOWN")));
 		s += temp;
+
+#if defined(ARDUINO_ARCH_ESP32)
+		//How full the app slot is, and the live table. Bumping the arduino-esp32 core costs
+		//upwards of 230 KB, and the stock "default" layout gives only 0x140000 per slot -- so
+		//this is what says whether a board can take its next build in place or has to be
+		//repartitioned to min_spiffs first.
+		{
+			const esp_partition_t * run = esp_ota_get_running_partition();
+			if(run)
+			{
+				uint32_t used = ESP.getSketchSize();
+				sprintf(temp, "App slot.........: %s 0x%06X + 0x%06X (%u KB)\n",
+					run->label, (unsigned) run->address, (unsigned) run->size, (unsigned) (run->size / 1024));
+				s += temp;
+
+				sprintf(temp, "Sketch...........: %u bytes, %u.%u%% of the slot, %u free\n",
+					(unsigned) used,
+					(unsigned) (100ULL * used / run->size),
+					(unsigned) ((1000ULL * used / run->size) % 10),
+					(unsigned) (run->size > used ? run->size - used : 0));
+				s += temp;
+			}
+
+			//An OTA image must land in the OTHER slot before it can run, so that slot -- not this
+			//one -- is the ceiling on the next build pushed to this board.
+			const esp_partition_t * nxt = esp_ota_get_next_update_partition(NULL);
+			if(nxt)
+			{
+				sprintf(temp, "OTA lands in.....: %s 0x%06X + 0x%06X, a build over %u bytes will not flash\n",
+					nxt->label, (unsigned) nxt->address, (unsigned) nxt->size, (unsigned) nxt->size);
+			}
+			else
+			{
+				sprintf(temp, "OTA lands in.....: nowhere -- single-app layout, no over-the-air update possible\n");
+			}
+			s += temp;
+
+			//App slots first, then data. ⛔ Not one pass over ESP_PARTITION_TYPE_ANY -- that value
+			//arrived with IDF 4, so it does not compile for the core 1.0.6 fleet, which is exactly
+			//the fleet this page has to be readable on.
+			s += "Partitions.......:\n";
+			const esp_partition_type_t types[2] = { ESP_PARTITION_TYPE_APP, ESP_PARTITION_TYPE_DATA };
+			int t;
+			for(t = 0; t < 2; t++)
+			{
+				esp_partition_iterator_t it = esp_partition_find(types[t], ESP_PARTITION_SUBTYPE_ANY, NULL);
+				for(; it != NULL; it = esp_partition_next(it))
+				{
+					const esp_partition_t * p = esp_partition_get(it);
+					if(!p)
+					{
+						continue;
+					}
+					sprintf(temp, "  %-9s type %u sub 0x%02X  0x%06X + 0x%06X (%u KB)\n",
+						p->label, p->type, p->subtype, (unsigned) p->address, (unsigned) p->size,
+						(unsigned) (p->size / 1024));
+					s += temp;
+				}
+				if(it)
+				{
+					esp_partition_iterator_release(it);
+				}
+			}
+			s += "\n";
+		}
+#endif
 
 #ifdef MMU_EXTERNAL_HEAP
 		sprintf(temp, "Heap free (Ext).: %i\n", heapFreeExt);
