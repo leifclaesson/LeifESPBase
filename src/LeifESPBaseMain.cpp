@@ -1144,6 +1144,39 @@ String MacToString(const uint8_t * mac)
 	return temp;
 }
 
+//Our own station MAC. ⛔ Never call WiFi.macAddress() for this -- on ESP32 core 3.x it needs the
+//STA netif, which does not exist until WiFi.mode(WIFI_STA) has run AND finished registering it
+//asynchronously. Anything asking earlier (a DefaultConfig() building a hostname or an MQTT topic,
+//an identity check, the boot banner) gets nothing, and gets it SILENTLY:
+//  - the String overload zero-fills its own buffer and ignores the failure -> a clean 00:00:...:00
+//  - the pointer overload returns NULL and NEVER WRITES the caller's buffer -> uninitialized stack
+//The library's only complaint is a log_e, compiled out at CORE_DEBUG_LEVEL=0 -- so a wrong answer
+//is indistinguishable from a right one, and a DefaultConfig() persists it to flash.
+//⭐ This is a core 3.x REGRESSION, not how it always was: 1.0.6 and 2.x both fell back to
+//esp_read_mac() themselves when the mode was still WIFI_MODE_NULL (WiFiSTA.cpp), which is exactly
+//the early case. 3.x moved the call to NetworkInterface::macAddress() and dropped that fallback.
+//The eFuse holds the factory station MAC and needs no netif and no radio, so it is right from the
+//first instruction of boot.
+uint8_t * LeifGetMacAddress(uint8_t * mac)
+{
+	if(!mac) return NULL;
+#if defined(ARDUINO_ARCH_ESP32) && defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 2)
+	esp_read_mac(mac, ESP_MAC_WIFI_STA);	//esp_mac.h, guarded at the top of this file -- 1.0.6 has no such header
+	return mac;
+#else
+	//ESP32 core 1.0.6 has the WIFI_MODE_NULL -> esp_read_mac() fallback built in, and the ESP8266
+	//reads its SDK directly (wifi_get_macaddr, no netif involved). Both are correct this early.
+	return WiFi.macAddress(mac);
+#endif
+}
+
+String LeifGetMacAddressString()
+{
+	uint8_t mac[6] = {0, 0, 0, 0, 0, 0};
+	LeifGetMacAddress(mac);
+	return MacToString(mac);
+}
+
 void ResetRSSIHistory()
 {
 	rssi_sum=-128*(int16_t) sizeof(rssi_history);
@@ -1519,24 +1552,9 @@ void LeifSetupBegin()
 
 	csprintf(PSTR("WiFi: %s\n"), LeifGetAllowWifiConnection()?PSTR("ENABLED"):PSTR("DISABLED"));
 	csprintf(PSTR("Using WiFi SSID: %s\n"), wifi_ssid);
-#if defined(ARDUINO_ARCH_ESP32) && ESP_ARDUINO_VERSION_MAJOR >= 3
-	//⛔ NOT WiFi.macAddress() this early. On core 3.x that resolves to
-	//NetworkInterface::macAddress(), which zero-fills a local buffer, asks the STA netif, and
-	//then IGNORES the failure -- so when the netif is not registered yet it renders a
-	//perfectly-formatted "00:00:00:00:00:00" and says nothing (its log_e is compiled out at
-	//CORE_DEBUG_LEVEL=0). WiFi.mode(WIFI_STA) above registers that netif asynchronously, so how
-	//this line came out depended on how long the console lines between the two took -- the same
-	//call at /sysinfo time is always correct, which is why the page and the boot log disagreed.
-	//The station MAC lives in eFuse and esp_read_mac() reads it with no netif and no radio.
-	{
-		uint8_t mac[6]={0,0,0,0,0,0};
-		esp_read_mac(mac, ESP_MAC_WIFI_STA);
-		csprintf(PSTR("MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n"),
-			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	}
-#else
-	csprintf(PSTR("MAC address: %s\n"), WiFi.macAddress().c_str());
-#endif
+	//⛔ NOT WiFi.macAddress() this early -- it silently returns nothing before the STA netif is up.
+	//LeifGetMacAddressString() is right at any point in boot; the why is on its definition above.
+	csprintf(PSTR("MAC address: %s\n"), LeifGetMacAddressString().c_str());
 	csprintf(PSTR("Host name: %s\n"), GetHostName());
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -2910,7 +2928,8 @@ void LeifHtmlMainPageCommonHeader(String & string)
 	{
 		string.concat(PSTR("MAC: "));
 
-		string.concat(WiFi.macAddress());
+		string.concat(LeifGetMacAddressString());	//WiFi.macAddress() happens to be right here (the page is served long
+													//after the netif is up), but there is one way to ask for our MAC, not two
 		//string.concat(PSTR("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"));
 		string.concat(PSTR("</td>"));
 	}

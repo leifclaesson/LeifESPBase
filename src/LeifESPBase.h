@@ -268,6 +268,12 @@ uint32_t LeifGetTotalWifiConnectionAttempts();
 String MacToString(const uint8_t * mac);
 bool ParseMacAddress(const char * pszMAC, uint8_t * cMacOut);
 
+//Our own station MAC, correct at ANY point in boot -- including before WiFi has started.
+//⛔ Use these instead of WiFi.macAddress(); see the definition in LeifESPBaseMain.cpp for what
+//core 3.x broke and why an early WiFi.macAddress() fails without saying so.
+uint8_t * LeifGetMacAddress(uint8_t * mac);	//fills 6 bytes, returns mac
+String LeifGetMacAddressString();			//"AA:BB:CC:DD:EE:FF"
+
 String GetArgument(const String & input, const char * argname);
 
 
