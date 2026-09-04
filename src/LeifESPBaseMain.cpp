@@ -58,6 +58,15 @@ static unsigned long ulSecondCounterWiFiWatchdog = 0;
 static fn_LeifESPBaseOtaTooLargeCallback g_cbOtaTooLarge=NULL;
 void LeifSetOtaTooLargeCallback(fn_LeifESPBaseOtaTooLargeCallback cb) { g_cbOtaTooLarge=cb; }
 
+static std::vector<fn_LeifESPBaseSysinfoSection> g_vecSysinfoSections;
+void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb)
+{
+	if(cb)
+	{
+		g_vecSysinfoSections.push_back(cb);
+	}
+}
+
 
 #if defined(ARDUINO_ARCH_ESP32)
 
@@ -1902,6 +1911,13 @@ void LeifSetupBegin()
 		sprintf(temp, PSTR("PHY protocol.....: %s\n"), PhyProtocolString().c_str());
 		s += temp;
 
+		//Sections other modules asked to add. They append here rather than registering their own
+		///sysinfo, which would never be reached.
+		size_t sec;
+		for(sec = 0; sec < g_vecSysinfoSections.size(); sec++)
+		{
+			g_vecSysinfoSections[sec](s);
+		}
 
 		server.send(200, PSTR("text/plain"), s);
 	});

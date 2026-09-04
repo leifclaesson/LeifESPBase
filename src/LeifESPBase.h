@@ -235,6 +235,9 @@ void LeifSetVersionText(const char * szVersion);
 typedef std::function<void(void)> fn_LeifESPBaseInterimCallback;
 void LeifSetInterimCallback(fn_LeifESPBaseInterimCallback cb);	//this function will get called periodically during lengthy operations such as sending the telnet scrollback buffer
 
+typedef std::function<void(String & out)> fn_LeifESPBaseSysinfoSection;
+void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb);	//appended to the end of /sysinfo, in the order added. This is how a module adds its own lines to the shared page. Registering a second server.on("/sysinfo") does NOT work: WebServer serves the FIRST handler that matches, and the library's is registered in LeifSetupBegin() before any sketch code runs, so the later one is silently unreachable.
+
 typedef std::function<void(void)> fn_LeifESPBaseOtaTooLargeCallback;
 void LeifSetOtaTooLargeCallback(fn_LeifESPBaseOtaTooLargeCallback cb);	//called when an OTA is refused because the image is larger than the inactive app slot. Refused by Update::begin() BEFORE any byte is written, so there is no partial image -- and it is the one moment the unit knows for certain its partition layout is too small for the firmware being pushed. Default none: the OTA fails exactly as it always did. A handler may repartition and restart, in which case it never returns.
 
