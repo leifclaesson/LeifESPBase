@@ -2780,6 +2780,19 @@ char szVersionText[12] = {0};
 
 char szExtCompileDate[32] = {0};
 
+//Link-time build stamp. The build patches the linked .elf, overwriting the placeholder that
+//follows the sentinel's terminating null with the local time, so the reported date is the
+//time the image was actually produced rather than the time this file happened to compile.
+//Sentinel and layout are CompileTimeInserter's (code_2/CompileTimeInserter), deliberately.
+//volatile: without it the compiler folds the placeholder straight into LeifGetLinkDate().
+#define LEIF_LINK_STAMP_OFFSET	23	//sentinel is 22 bytes, then a null, then the field
+#define LEIF_LINK_STAMP_LENGTH	24
+
+volatile char szLeifLinkStamp[] =
+		"**COMPILE_TIME_DUMMY**"
+		"\0"
+		"N/A                     ";
+
 void LeifHtmlMainPageCommonHeader(String & string)
 {
 
@@ -3102,10 +3115,49 @@ String LeifGetVersionText()
 }
 
 
+String LeifGetLinkDate()
+{
+	char temp[LEIF_LINK_STAMP_LENGTH+1];
+	int i;
+
+	for(i=0;i<LEIF_LINK_STAMP_LENGTH;i++)
+	{
+		temp[i]=szLeifLinkStamp[LEIF_LINK_STAMP_OFFSET+i];	//volatile read, one byte at a time
+	}
+	temp[LEIF_LINK_STAMP_LENGTH]=0;
+
+	for(i=0;i<LEIF_LINK_STAMP_LENGTH;i++)
+	{
+		if(!temp[i])
+		{
+			break;
+		}
+	}
+
+	while(i && temp[i-1]==' ')
+	{
+		i--;
+	}
+	temp[i]=0;
+
+	if(!strcmp(temp,"N/A"))
+	{
+		return String();	//never patched: this build did not go through the stamping step
+	}
+
+	return temp;
+}
+
 String LeifGetCompileDate()
 {
 	const char compile_date[] = __DATE__ " " __TIME__;
-	if(strlen(szExtCompileDate))
+
+	String strLink=LeifGetLinkDate();
+	if(strLink.length())
+	{
+		return strLink;
+	}
+	else if(strlen(szExtCompileDate))
 	{
 		return szExtCompileDate;
 	}

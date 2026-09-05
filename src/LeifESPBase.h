@@ -228,6 +228,7 @@ void LeifUptimeString(String & string);
 String LeifGetResetReasonString();	//cross-arch last-reset cause: "POWERON"/"BROWNOUT"/"PANIC"/"SW"/"EXT"(external reset pin, e.g. STM8 watchdog)/"TASK_WDT"/"INT_WDT"/"DEEPSLEEP" (ESP32), or ESP.getResetReason() (ESP8266)
 
 String LeifGetCompileDate();
+String LeifGetLinkDate();	//the link-time stamp alone, empty if this image was never stamped
 String LeifGetVersionText();
 
 void LeifSetVersionText(const char * szVersion);

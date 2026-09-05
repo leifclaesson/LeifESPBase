@@ -4,6 +4,7 @@ Reconstructed from the commit history. The library has never carried release num
 
 ## 2026
 
+- **2026-09-05** The compile time on the status page is the time the image was actually built. It used to be `__DATE__`/`__TIME__` from whenever the sketch's own main file last compiled, so changing anything else left the page reporting an old date. The build now writes the time into a sentinel in the linked `.elf`; a build that has nothing to do still writes nothing, and an image that was never stamped falls back to the old value. `LeifGetLinkDate` returns the stamp alone, empty when there is none.
 - **2026-08-30** WiFi modem sleep is no longer disabled on ESP32, so the Arduino core default applies again.
 - **2026-08-30** The README now documents the telnet console, and the convention for putting the device's IP address on a recurring status line.
 - **2026-08-23** The telnet console takes several clients at once: five seats on ESP32 with Arduino core 3 or later, two on ESP8266 and on older ESP32 cores. Override with `-DLEIF_TELNET_MAX_CLIENTS=n`.
