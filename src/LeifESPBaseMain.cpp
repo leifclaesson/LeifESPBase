@@ -1232,14 +1232,28 @@ bool SetupWifiInternal()
 	WiFi.hostname(GetHostName());
 #else
 	WiFi.setHostname(GetHostName());
-	//Leif, 2026-08-30: "Drop it everywhere. Let's get rid of it. Keep the default."
-	//A WiFi.setSleep(false) lived here, claiming to stop MQTT keepalives dropping on a
-	//marginal link. //Leif: "it was never instrumented properly. It was one of many, many,
-	//many things we tried before we knew that the problem was that we were whispering at
-	//literally one one thousandth of actual ERP output power." So it never earned its place,
-	//and it cost every ESP32 firmware in the tree its WiFi modem sleep. The Arduino core's
-	//own default (WIFI_PS_MIN_MODEM on plain ESP32) is what we want; say nothing and get it.
-	//Do not re-add it -- and note IDF 4.4 hard-aborts if power save is NONE with Bluetooth up.
+#endif
+	//Leif, 2026-09-08: "do turn power save off. For both 8266 and ESP32 in LeifESPBase. That
+	//way it will catch all of them when I update."
+	//WHY, measured on the basement bench 2026-09-07/08 (misc/docs/plans/unifi-mcast-bench-rig-plan.md):
+	//ONE station in 802.11 power save on a BSS makes the access point hold every group frame to
+	//the DTIM beacon and release ~8 of them back-to-back, and on a Wi-Fi 6 AP (U6 Pro) every
+	//receiver inside that lump -- Linux, ESP8266, ESP32 -- loses ~32 points of the light show.
+	//Sleeper-free, the same AP delivers like an AC Pro. 105 of the 197 stations on the IoT SSID
+	//were sleepers and every one was an Espressif board with the core default, so the fix has
+	//to be fleet-wide and firmware-side: no LeifESPBase device may be the sleeper.
+	//This REVERSES the 2026-08-30 removal (//Leif then: "Drop it everywhere. Let's get rid of
+	//it. Keep the default."). That removal was right about the MQTT-keepalive claim it undid
+	//(never instrumented; the real fault then was ERP power) and wrong about the cost of the
+	//default: WIFI_PS_MIN_MODEM on ESP32 / modem sleep on ESP8266 is exactly what lumps the BSS
+	//for everybody.
+	//⚠ IDF 4.4 hard-aborts if power save is NONE while Bluetooth is up: a product that starts
+	//the BT controller must call WiFi.setSleep(true) first (none in the tree does at 2026-09-08
+	//per grep; re-check when one appears).
+#if defined(ARDUINO_ARCH_ESP8266)
+	WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#else
+	WiFi.setSleep(false);
 #endif
 	ulSecondCounterWiFiWatchdog=0;
 #if defined(WIFI_RECONNECT)
@@ -1782,7 +1796,14 @@ void LeifSetupBegin()
 #endif
 
 
-		sprintf(temp, PSTR("Clock Freq.......: %.01f MHz\n"), cpu_freq_khz / 1000.0f);
+		//⛔ NOT %f, deliberately. A product may cancel the float printf hooks at link time to claw back
+		//flash (the Lightbulb bulbs do -- ~16.6 KB), and this field then renders BLANK on that product's
+		///sysinfo page with nothing on it to say why. Found on a bulb 2026-09-07. Integer maths gives the
+		//identical text on every product and cannot be silently broken by a linker flag.
+		{
+			uint32_t tenths=(cpu_freq_khz+50)/100;		//kHz -> tenths of a MHz, rounded
+			sprintf(temp, PSTR("Clock Freq.......: %u.%u MHz\n"), tenths/10, tenths%10);
+		}
 		s += temp;
 
 		sprintf(temp, PSTR("Reset reason.....: %s\n"), LeifGetResetReasonString().c_str());
