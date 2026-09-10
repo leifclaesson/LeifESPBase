@@ -12,6 +12,8 @@
 						//ESP_ARDUINO_VERSION_MAJOR (esp_arduino_version.h, core 2.0.0+) is the test.
 #endif
 #include <lwip/sockets.h>	//select()/fd_set for LeifWebServer's bounded non-blocking response write (below)
+#include <soc/gpio_struct.h>	//GPIO.func_out_sel_cfg / enable_w1tc -- the matrix reset at boot (below)
+#include <soc/gpio_sig_map.h>	//U0TXD_OUT_IDX
 #endif
 
 #ifndef NO_OTA
@@ -28,6 +30,95 @@ bool bUpdatingOTA = false;
 #endif
 
 uint32_t serial_debug_rate=115200;
+
+//---- GPIO matrix: undo what the PREVIOUS firmware left on the pads ----------------------------
+//Leif, 2026-09-10: "this has bit me ... if one has been set as PWM, then restarting to relay
+//control means the pins won't work until I hard power cycle." Measured the same day on the BD
+//remote bench host: the hardware I2C0's SDA/SCL signals still owned pads 18/19 through every
+//software restart and an OTA after the config had moved them to a bit-banged bus -- the 1.0.6
+//pinMode writes IO_MUX and GPIO.pin[] only, never the matrix, and ESP.restart() on that SDK is
+//a CPU reset that leaves the GPIO block as it was. So a pad a peripheral (LEDC, a UART TX, I2C,
+//...) drove in the previous firmware stays that peripheral's, GPIO.out/enable are written and
+//ignored, and the pin is dead until a power cycle.
+//
+//This runs as a static constructor, BEFORE initArduino() and setup(): nothing this boot has
+//attached anything yet, so whatever is still on the matrix is the previous firmware's, and the
+//order of calls inside setup() stops mattering. Only pads a peripheral owns are touched
+//(func_out_sel below 0x100); a GPIO-driven pad (a relay) keeps its level through the restart
+//exactly as before. ⛔ The ROM's detach SETS the pad's output enable, so it is cleared right
+//after -- the freed pad is an input until the sketch claims it, which is what a power cycle
+//gives too. UART0's TX is left alone so the boot console keeps talking (the previous run's
+//Serial.begin put it on the matrix as well); the SPI-flash pads 6-11 and the input-only pads
+//34-39 are never touched. arduino-esp32 3.x routes a pad back to the register in every
+//gpio_config, so there it is a no-op in practice; classic ESP32 only, the S/C parts lay the
+//GPIO block out differently and none of the fleet runs one.
+//
+//Proven 2026-09-10 on a devkit running RelayControlESP32 (1.0.6): hardware Wire on 18/19, a
+//restart onto a softwire config -> "freed pad 2 (signal 86), 18 (signal 30), 19 (signal 29)";
+//86 is LEDC_LS_SIG_OUT7, the status LED's fade channel, so every soft restart of a board with a
+//status LED prints that pad -- that is the PWM case Leif described, working, not a fault.
+#if defined(ARDUINO_ARCH_ESP32) && (!defined(ESP_ARDUINO_VERSION_MAJOR) || defined(CONFIG_IDF_TARGET_ESP32))
+#define LEIF_MATRIX_RESET 1
+static uint64_t ullMatrixFreed=0;		//bit per pad freed at boot, reported once the console is up
+static uint16_t uMatrixFreedSignal[34];	//what owned it
+
+__attribute__((constructor)) static void LeifMatrixResetAtBoot(void)
+{
+	for(int pin=0;pin<34;pin++)
+	{
+		if(pin>=6 && pin<=11)
+		{
+			continue;
+		}
+
+		uint32_t sig=GPIO.func_out_sel_cfg[pin].func_sel;
+
+		//0x100 is the GPIO register. Bit 8 is the test, not equality: pads 20, 21, 22, 29 and 30
+		//come out of a hard reset reading 0x101 (measured 2026-09-10 on a D0WDQ6 devkit, every
+		//power-on), and an equality test reported five pads nothing had touched on every cold boot.
+		if(sig>=0x100 || sig==U0TXD_OUT_IDX)
+		{
+			continue;
+		}
+
+		pinMatrixOutDetach(pin, false, false);
+
+		if(pin<32)
+		{
+			GPIO.enable_w1tc=((uint32_t) 1<<pin);
+		}
+		else
+		{
+			GPIO.enable1_w1tc.val=((uint32_t) 1<<(pin-32));
+		}
+
+		ullMatrixFreed|=((uint64_t) 1<<pin);
+		uMatrixFreedSignal[pin]=(uint16_t) sig;
+	}
+}
+
+static void LeifMatrixResetReport(void)
+{
+	if(!ullMatrixFreed)
+	{
+		return;
+	}
+
+	String s;
+
+	for(int pin=0;pin<34;pin++)
+	{
+		if(ullMatrixFreed & ((uint64_t) 1<<pin))
+		{
+			if(s.length()) s+=", ";
+			s+=String(pin)+" (signal "+String(uMatrixFreedSignal[pin])+")";
+		}
+	}
+
+	csprintf(PSTR("GPIO matrix: freed pad %s left attached by the previous run\n"), s.c_str());
+}
+#endif
+//----------------------------------------------------------------------------------------------
 
 String LeifGetResetReasonString()
 {
@@ -1477,6 +1568,10 @@ void LeifSetupBegin()
 	DisableSerialLogging();
 
 	LeifSetupConsole();
+
+#ifdef LEIF_MATRIX_RESET
+	LeifMatrixResetReport();	//the constructor above ran long before the console existed
+#endif
 
 #if defined(ARDUINO_ARCH_ESP8266)
 	analogWriteRange(1023);
