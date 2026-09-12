@@ -4,11 +4,44 @@
 //the member that would otherwise be dragged in. Measurements and the full reachability
 //working live in misc\docs\plans\lightbulb-esp32-pcf8574-size-audit-plan.md.
 //
-//Worth 84,816 B on Lightbulb_ESP32_PCF8574 (1,300,528 -> 1,215,712; margin 10,192 -> 95,008),
-//measured 2026-09-12 and proven on a bench board the same night: associates to WPA2-PSK,
-//MQTT + PTP up, OTA push accepted, all identical to stock.
+//The AP/WPA3 pair is worth 84,576 B on Lightbulb_ESP32_PCF8574 (1,300,528 -> 1,215,952; margin
+//10,192 -> 94,768), proven on a bench board 2026-09-12: associates to WPA2-PSK, MQTT + PTP up,
+//OTA push accepted, all identical to stock, and a 6 h paired soak against a stock control.
+//(84,816 / 1,215,712 appear in older notes -- that was the loose measurement stub, before the
+//promotion into this file. The tracked build measures 1,215,952 exactly, 2026-09-13.)
 
 #include "LeifESPBase.h"
+
+//---------------------------------------------------------------------------------------------
+//The cuts in this file are INDEPENDENT -- a project may take any subset. Only the AP/WPA3 pair
+//is inseparable, and that pair enforces itself a few lines down.
+//
+//  NO_HOST_AP + NO_WPA3 (+ NO_SOFT_AP)   84,576 B   SAE/SAE-PK/OWE + the AP-side authenticator
+//  NO_CAMELLIA_ARIA                       6,543 B   mbedtls ciphers nothing in the image selects
+//  NO_PPP                                19,351 B   lwIP's PPP / PPPoS stack
+//---------------------------------------------------------------------------------------------
+#if defined(ARDUINO_ARCH_ESP32) && \
+	(defined(NO_HOST_AP) || defined(NO_WPA3) || defined(NO_CAMELLIA_ARIA) || defined(NO_PPP))
+#define LEIF_LINKSTUBS_ANY 1
+#endif
+
+#ifdef LEIF_LINKSTUBS_ANY
+
+#include <stdint.h>
+#include <stddef.h>
+
+//A stub that is ever entered means a premise of its own cut is wrong. Counting costs 4 bytes of
+//.bss and a handful of instructions, and turns "impossible" into something a board can actually
+//be asked about -- LeifGetLinkStubHits() is non-zero if and only if one of these ran.
+//⛔ Deliberately NOT a csprintf: some of these sit on the disconnect path and one on the RSNXE
+//parse, and a print from the WiFi driver task is a worse bug than the one it would report.
+//⛔ A stub a healthy board enters on a NORMAL path must NOT call this. One that does turns the
+//counter from an alarm into a tally, and an alarm that is always on is not an alarm. ppp_init()
+//below is the worked example: it genuinely runs, at every boot, from lwip_init().
+static volatile uint32_t g_LinkStubHits = 0;
+#define STUB_HIT() do { g_LinkStubHits++; } while (0)
+
+#endif	//LEIF_LINKSTUBS_ANY
 
 #if defined(ARDUINO_ARCH_ESP32) && (defined(NO_HOST_AP) || defined(NO_WPA3))
 
@@ -105,13 +138,7 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef unsigned int wpa_event;
 
-//A stub that is ever entered means a premise above is wrong. Counting costs 4 bytes of .bss and
-//a handful of instructions, and turns "impossible" into something a board can actually be asked
-//about -- LeifGetLinkStubHits() is non-zero if and only if one of these ran.
-//⛔ Deliberately NOT a csprintf: two of these sit on the disconnect path and one on the RSNXE
-//parse, and a print from the WiFi driver task is a worse bug than the one it would report.
-static volatile uint32_t g_LinkStubHits = 0;
-#define STUB_HIT() do { g_LinkStubHits++; } while (0)
+//g_LinkStubHits / STUB_HIT() are defined once at the top of the file, shared by every cut.
 
 extern "C"
 {
@@ -298,11 +325,303 @@ bool sae_pk_valid_password(const char *pw)
 
 #endif	//ARDUINO_ARCH_ESP32 && (NO_HOST_AP || NO_WPA3)
 
-//Always defined, so a project can read it without caring whether it took the cut -- a build
+
+//=============================================================================================
+//NO_CAMELLIA_ARIA -- 6,543 B. camellia.c.obj (4,114) + aria.c.obj (2,429) in libmbedcrypto.a.
+//=============================================================================================
+//
+//These are not dragged in by anything CALLING them. They are dragged in by a lookup TABLE:
+//cipher_wrap.c holds an mbedtls_cipher_base_t per algorithm whose members are function
+//pointers, so the address of every camellia_*/aria_* entry is taken at file scope and the
+//members link whether or not any path selects those ciphers. The reference is data, not code.
+//
+//⭐ WHY NOTHING CAN SELECT THEM -- traced 2026-09-13, not assumed:
+//  * The camellia/aria symbols are reached only from the static *_wrap() shims inside
+//    cipher_wrap.c (camellia_crypt_ecb_wrap, aria_setkey_enc_wrap, ccm_camellia_setkey_wrap,
+//    ...). A shim runs only if something picks its table row.
+//  * A row is picked by mbedtls_cipher_info_from_type/_from_values. In THIS image the only
+//    callers are ccm.c, cmac.c, gcm.c and wpa_supplicant's crypto_mbedtls.c.
+//  * Of those, the only one on a live path is omac1_aes_vector(). Disassembled: it derives the
+//    cipher type ARITHMETICALLY from the key length -- 16 -> 2, 24 -> 3, 32 -> 4, i.e.
+//    MBEDTLS_CIPHER_AES_128/192/256_ECB. There is no input that makes it produce any other
+//    value, so no CAMELLIA_* or ARIA_* row is reachable from it.
+//  * cmac.c's own selectors are dead: mbedtls_cipher_cmac and mbedtls_aes_cmac_prf_128 are
+//    referenced by NOTHING in the link, and the rest are self-tests.
+//  (misc\claude\lightbulb-size-audit\bench\whoref.py and callsites.py reproduce all of this.)
+//
+//⭐ AND -- unlike the WPA3 cut -- this one does not NEED that argument to be airtight, because
+//every stub here FAILS rather than lies. setkey returns an error, so a caller that somehow did
+//select Camellia gets a clean "this cipher is unavailable" at setup and never reaches a crypt
+//call. ⛔ That property is the whole safety case: a stub that returned 0 from a crypt function
+//while leaving `output` untouched would hand back the plaintext as ciphertext. None do.
+//
+//⇒ Safe for any project. A build that uses mbedtls TLS and negotiates a Camellia ciphersuite
+//would merely find it unavailable, which is also the truth.
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(NO_CAMELLIA_ARIA)
+
+//Only ever passed as pointers, so incomplete types are exact and keep mbedtls's headers out.
+struct mbedtls_camellia_context;
+struct mbedtls_aria_context;
+
+//mbedtls/camellia.h:25 and mbedtls/aria.h:36, esp32-libs 3.3.10.
+#define LEIF_ERR_CAMELLIA_BAD_INPUT_DATA	(-0x0024)
+#define LEIF_ERR_ARIA_BAD_INPUT_DATA		(-0x005C)
+
+extern "C"
+{
+
+//--- Camellia ---------------------------------------------------------------------------------
+//Prototypes recovered from the shipped .debug_info of libmbedcrypto.a (dwarfproto.py), not from
+//the headers -- crypt_ecb takes a `mode` here and aria's does not, which a hand-written pair
+//would have got wrong.
+
+void mbedtls_camellia_init(struct mbedtls_camellia_context *ctx)
+{
+	(void) ctx;
+	STUB_HIT();
+	//The real body only zeroes the context. Skipping that is safe because setkey below always
+	//fails, so no path ever reads a field of it.
+}
+
+void mbedtls_camellia_free(struct mbedtls_camellia_context *ctx)
+{
+	(void) ctx;
+	STUB_HIT();
+	//The context owns no allocation -- it is a plain struct -- so there is nothing to release.
+}
+
+int mbedtls_camellia_setkey_enc(struct mbedtls_camellia_context *ctx, const unsigned char *key,
+		unsigned int keybits)
+{
+	(void) ctx; (void) key; (void) keybits;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;	//refuse the key: Camellia is not in this image
+}
+
+int mbedtls_camellia_setkey_dec(struct mbedtls_camellia_context *ctx, const unsigned char *key,
+		unsigned int keybits)
+{
+	(void) ctx; (void) key; (void) keybits;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;
+}
+
+//⛔ Every crypt function below returns an ERROR and leaves `output` untouched. Returning 0
+//would present unwritten memory as ciphertext -- the one failure mode that would be worse than
+//the 4,114 bytes this saves.
+int mbedtls_camellia_crypt_ecb(struct mbedtls_camellia_context *ctx, int mode,
+		const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) mode; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_camellia_crypt_cbc(struct mbedtls_camellia_context *ctx, int mode, size_t length,
+		unsigned char *iv, const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) mode; (void) length; (void) iv; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_camellia_crypt_cfb128(struct mbedtls_camellia_context *ctx, int mode, size_t length,
+		size_t *iv_off, unsigned char *iv, const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) mode; (void) length; (void) iv_off; (void) iv; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_camellia_crypt_ctr(struct mbedtls_camellia_context *ctx, size_t length,
+		size_t *nc_off, unsigned char *nonce_counter, unsigned char *stream_block,
+		const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) length; (void) nc_off; (void) nonce_counter; (void) stream_block;
+	(void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_CAMELLIA_BAD_INPUT_DATA;
+}
+
+//--- ARIA -------------------------------------------------------------------------------------
+//⛔ aria_crypt_ecb takes THREE parameters, not four -- it has no `mode`. Camellia's does.
+
+void mbedtls_aria_init(struct mbedtls_aria_context *ctx)
+{
+	(void) ctx;
+	STUB_HIT();
+}
+
+void mbedtls_aria_free(struct mbedtls_aria_context *ctx)
+{
+	(void) ctx;
+	STUB_HIT();
+}
+
+int mbedtls_aria_setkey_enc(struct mbedtls_aria_context *ctx, const unsigned char *key,
+		unsigned int keybits)
+{
+	(void) ctx; (void) key; (void) keybits;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_aria_setkey_dec(struct mbedtls_aria_context *ctx, const unsigned char *key,
+		unsigned int keybits)
+{
+	(void) ctx; (void) key; (void) keybits;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_aria_crypt_ecb(struct mbedtls_aria_context *ctx, const unsigned char *input,
+		unsigned char *output)
+{
+	(void) ctx; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_aria_crypt_cbc(struct mbedtls_aria_context *ctx, int mode, size_t length,
+		unsigned char *iv, const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) mode; (void) length; (void) iv; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_aria_crypt_cfb128(struct mbedtls_aria_context *ctx, int mode, size_t length,
+		size_t *iv_off, unsigned char *iv, const unsigned char *input, unsigned char *output)
+{
+	(void) ctx; (void) mode; (void) length; (void) iv_off; (void) iv; (void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+int mbedtls_aria_crypt_ctr(struct mbedtls_aria_context *ctx, size_t length, size_t *nc_off,
+		unsigned char *nonce_counter, unsigned char *stream_block, const unsigned char *input,
+		unsigned char *output)
+{
+	(void) ctx; (void) length; (void) nc_off; (void) nonce_counter; (void) stream_block;
+	(void) input; (void) output;
+	STUB_HIT();
+	return LEIF_ERR_ARIA_BAD_INPUT_DATA;
+}
+
+}	//extern "C"
+
+#endif	//ARDUINO_ARCH_ESP32 && NO_CAMELLIA_ARIA
+
+
+//=============================================================================================
+//NO_PPP -- 19,351 B. lcp, ipcp, fsm, vj, pppos, ppp, upap, auth, magic in liblwip.a.
+//=============================================================================================
+//
+//The best ratio on the whole table: nine members for seven stubs, because PPP is a closed
+//subsystem that talks almost entirely to itself. Six of the seven are reached only from
+//esp_netif_lwip_ppp.c -- esp_netif_new_ppp(), esp_netif_start_ppp(), esp_netif_stop_ppp(),
+//esp_netif_destroy_ppp(), esp_netif_ppp_set_auth_internal() -- and every one of those runs only
+//for an esp_netif created with a PPP base. This board creates a WiFi STA netif and nothing else,
+//so no PPP pcb is ever constructed. (callsites.py names each enclosing function.)
+//
+//⛔ ppp_init() is the exception and it matters: it is called from lwip_init(), so it runs at
+//EVERY boot on every board. Disassembled -- its whole body is memp_init_pool() over PPP's own
+//private memory pools. Skipping that leaves those pools' free lists unbuilt, which is harmless
+//precisely because nothing ever allocates from them; the pools' storage lives in memp.c and is
+//not what this cut removes. ⇒ It is the one stub here that must NOT count a hit, or the alarm
+//would read non-zero on a perfectly healthy board from the first second and mean nothing.
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(NO_PPP)
+
+//lwIP spellings. err_t is s8_t: lwip/err.h:97, with no LWIP_ERR_T override in the esp32 cc.h.
+typedef int8_t err_t_lwip;
+struct ppp_pcb_s;
+struct netif;
+struct pbuf;
+
+extern "C"
+{
+
+int ppp_init(void)
+{
+	//⛔ NOT counted -- see the note above. This one legitimately runs at every boot.
+	return 0;						//lwIP ignores the value; 0 is its own success return
+}
+
+err_t_lwip ppp_connect(struct ppp_pcb_s *pcb, uint16_t holdoff)
+{
+	(void) pcb; (void) holdoff;
+	STUB_HIT();
+	return -1;						//ERR_MEM -- there is no PPP stack to connect with
+}
+
+err_t_lwip ppp_close(struct ppp_pcb_s *pcb, uint8_t nocarrier)
+{
+	(void) pcb; (void) nocarrier;
+	STUB_HIT();
+	return -1;
+}
+
+err_t_lwip ppp_free(struct ppp_pcb_s *pcb)
+{
+	(void) pcb;
+	STUB_HIT();
+	return -1;
+}
+
+void ppp_set_auth(struct ppp_pcb_s *pcb, uint8_t authtype, const char *user, const char *passwd)
+{
+	(void) pcb; (void) authtype; (void) user; (void) passwd;
+	STUB_HIT();
+}
+
+void ppp_set_notify_phase_callback(struct ppp_pcb_s *pcb, void *notify_phase_cb)
+{
+	(void) pcb; (void) notify_phase_cb;
+	STUB_HIT();
+}
+
+err_t_lwip ppp_ioctl(struct ppp_pcb_s *pcb, uint8_t cmd, void *arg)
+{
+	(void) pcb; (void) cmd; (void) arg;
+	STUB_HIT();
+	return -1;
+}
+
+//⭐ Returns NULL, and that is the value the cut depends on: esp_netif_new_ppp() checks it and
+//fails the netif creation, so nothing downstream ever holds a half-built pcb.
+struct ppp_pcb_s * pppos_create(struct netif *pppif, void *output_cb, void *link_status_cb,
+		void *ctx_cb)
+{
+	(void) pppif; (void) output_cb; (void) link_status_cb; (void) ctx_cb;
+	STUB_HIT();
+	return 0;
+}
+
+//⛔ The two that the FIRST stub set missed, and the link error that found them is the lesson:
+//`pppos_input_sys` is referenced from libesp_netif.a's OWN `ppp.c.obj` -- a different member
+//that happens to share a basename with liblwip.a's, and which the ld map spells
+//`esp_netif_lwip_ppp.c.obj`. Keying the analysis off the map's names made that member's
+//references invisible. `bench\stubany.py` now over-approximates the keep set instead.
+//Both call sites are PPP-only: pppapi_do_ppp_ioctl() and pppos_input_tcpip_as_ram_pbuf().
+err_t_lwip pppos_input_sys(struct pbuf *p, struct netif *inp)
+{
+	(void) p; (void) inp;
+	STUB_HIT();
+	return -1;						//ERR_MEM: there is no PPP netif to hand this pbuf to
+}
+
+}	//extern "C"
+
+#endif	//ARDUINO_ARCH_ESP32 && NO_PPP
+
+
+//Always defined, so a project can read it without caring whether it took any cut -- a build
 //that did not stub anything has nothing to report and says zero.
 uint32_t LeifGetLinkStubHits()
 {
-#if defined(ARDUINO_ARCH_ESP32) && defined(NO_HOST_AP) && defined(NO_WPA3)
+#ifdef LEIF_LINKSTUBS_ANY
 	return g_LinkStubHits;
 #else
 	return 0;
