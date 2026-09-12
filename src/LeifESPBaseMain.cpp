@@ -2152,6 +2152,16 @@ void LeifSetupBegin()
 		sprintf(temp, PSTR("PHY protocol.....: %s\n"), PhyProtocolString().c_str());
 		s += temp;
 
+		//⛔ Only printed when NON-ZERO, and that is the point: a link stub in LinkStubsESP32.cpp
+		//was entered, so a premise of the WPA3 / AP-authenticator cut is wrong on this board. An
+		//alarm nobody can ask about is not an alarm.
+		if(LeifGetLinkStubHits())
+		{
+			sprintf(temp, PSTR("LINK STUB HITS...: %u  <-- the WPA3/AP-authenticator cut was REACHED; see LinkStubsESP32.cpp\n"),
+					(unsigned) LeifGetLinkStubHits());
+			s += temp;
+		}
+
 		//Sections other modules asked to add. They append here rather than registering their own
 		///sysinfo, which would never be reached.
 		size_t sec;

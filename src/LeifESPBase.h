@@ -28,6 +28,7 @@
 #include "LeifESPBaseMain.h"
 #include "LeifESPBaseWOL.h"
 #include "LeifESPBaseAP.h"
+#include "LinkStubsESP32.h"
 
 
 
