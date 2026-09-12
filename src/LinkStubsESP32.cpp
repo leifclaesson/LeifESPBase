@@ -12,20 +12,33 @@
 
 #include "LeifESPBase.h"
 
-//---------------------------------------------------------------------------------------------
-//The cuts in this file are INDEPENDENT -- a project may take any subset. Only the AP/WPA3 pair
-//is inseparable, and that pair enforces itself a few lines down.
-//
-//  NO_HOST_AP + NO_WPA3 (+ NO_SOFT_AP)   84,576 B   SAE/SAE-PK/OWE + the AP-side authenticator
-//  NO_CAMELLIA_ARIA                       6,543 B   mbedtls ciphers nothing in the image selects
-//  NO_PPP                                19,351 B   lwIP's PPP / PPPoS stack
-//---------------------------------------------------------------------------------------------
-#if defined(ARDUINO_ARCH_ESP32) && \
-	(defined(NO_HOST_AP) || defined(NO_WPA3) || defined(NO_CAMELLIA_ARIA) || defined(NO_PPP))
-#define LEIF_LINKSTUBS_ANY 1
-#endif
+//LEIF_LINKSTUBS_ANY and the list of what each flag cuts live in LinkStubsESP32.h, which
+//LeifESPBase.h pulls in above -- the header has to make the same decision anyway, to know
+//whether LeifGetLinkStubHits() is a symbol here or an inline zero.
 
 #ifdef LEIF_LINKSTUBS_ANY
+
+//A canary against an SDK bump moving the ground under us. Every symbol this file defines is
+//INTERNAL to its component -- none appears in a public header, so nothing else would notice a
+//renamed or re-signatured one until a board failed in the field. The prototypes were recovered
+//from the shipped .debug_info of esp32-libs 3.3.10's own archives
+//(misc\claude\lightbulb-size-audit\bench\dwarfproto.py), so they are exact for THAT build.
+//⛔ This guard covers EVERY cut in this file, not just the AP/WPA3 pair. It used to sit inside
+//the NO_HOST_AP/NO_WPA3 block, which left NO_CAMELLIA_ARIA and NO_PPP unguarded -- and those two
+//are derived against exactly the same SDK. That matters here and not in theory: of the 68 ESP32
+//Sloeber projects, 50 are on core 1.0.6 / 2.0.x / 3.1.x (surveyed 2026-09-13), so the cut with
+//the fewest interlocks was also the one most likely to be added to a core it was never derived
+//for. Moved up before the first promotion outside Lightbulb_ESP32_PCF8574.
+//⛔ Nested, not one || expression: on core 1.0.6 ESP_ARDUINO_VERSION_VAL does not exist, and a
+//function-like macro that does not exist is a preprocessor SYNTAX error inside #if, not a
+//quietly-zero identifier -- so the guard would fail as a parse error instead of as this message.
+#ifndef ESP_ARDUINO_VERSION
+#error "LinkStubsESP32 needs arduino-esp32 3.3.x (ESP-IDF 5.5.4); this core is too old -- re-derive the stub set first"
+#else
+#if ESP_ARDUINO_VERSION < ESP_ARDUINO_VERSION_VAL(3, 3, 0)
+#error "LinkStubsESP32 was derived against arduino-esp32 3.3.x / ESP-IDF 5.5.4 -- re-derive the stub set before using it on an older core"
+#endif
+#endif
 
 #include <stdint.h>
 #include <stddef.h>
@@ -71,21 +84,8 @@ static volatile uint32_t g_LinkStubHits = 0;
 #error "NO_HOST_AP cuts the AP-side authenticator, so a soft AP cannot work -- set NO_SOFT_AP too"
 #endif
 
-//A canary against an SDK bump moving the ground under us. These symbols are INTERNAL to the
-//wpa_supplicant component -- they appear in no public header, so nothing else would notice a
-//renamed or re-signatured one until a board failed to associate in the field. The prototypes
-//below were recovered from the shipped .debug_info of esp32-libs 3.3.10's own archives
-//(misc\claude\lightbulb-size-audit\bench\dwarfproto.py), so they are exact for THAT build.
-//⛔ Nested, not one || expression: on core 1.0.6 ESP_ARDUINO_VERSION_VAL does not exist, and a
-//function-like macro that does not exist is a preprocessor SYNTAX error inside #if, not a
-//quietly-zero identifier -- so the guard would fail as a parse error instead of as this message.
-#ifndef ESP_ARDUINO_VERSION
-#error "LinkStubsESP32 needs arduino-esp32 3.3.x (ESP-IDF 5.5.4); this core is too old -- re-derive the stub set first"
-#else
-#if ESP_ARDUINO_VERSION < ESP_ARDUINO_VERSION_VAL(3, 3, 0)
-#error "LinkStubsESP32 was derived against arduino-esp32 3.3.x / ESP-IDF 5.5.4 -- re-derive the stub set before using it on an older core"
-#endif
-#endif
+//The core-version canary that used to sit here now covers every cut in this file -- see the top
+//of the file, just inside LEIF_LINKSTUBS_ANY.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -617,13 +617,12 @@ err_t_lwip pppos_input_sys(struct pbuf *p, struct netif *inp)
 #endif	//ARDUINO_ARCH_ESP32 && NO_PPP
 
 
-//Always defined, so a project can read it without caring whether it took any cut -- a build
-//that did not stub anything has nothing to report and says zero.
+//⛔ Defined ONLY when a cut was taken. The no-cut case is an inline zero in the header, so a
+//project that took no cut never has to carry this file -- see LinkStubsESP32.h for the ~60
+//projects that stopped linking when it did.
+#ifdef LEIF_LINKSTUBS_ANY
 uint32_t LeifGetLinkStubHits()
 {
-#ifdef LEIF_LINKSTUBS_ANY
 	return g_LinkStubHits;
-#else
-	return 0;
-#endif
 }
+#endif
