@@ -14,6 +14,9 @@
 #include <lwip/sockets.h>	//select()/fd_set for LeifWebServer's bounded non-blocking response write (below)
 #include <soc/gpio_struct.h>	//GPIO.func_out_sel_cfg / enable_w1tc -- the matrix reset at boot (below)
 #include <soc/gpio_sig_map.h>	//U0TXD_OUT_IDX
+#ifdef USE_MCPWM_FADE_LED
+#include <driver/mcpwm.h>	//status LED fade on the motor-control PWM unit -- see StatusLedFadeAttach()
+#endif
 #endif
 
 #ifndef NO_OTA
@@ -1489,7 +1492,6 @@ void LeifSetupConsole(uint16_t _scrollback_bytes)
 };
 
 #ifndef NO_FADE_LED
-uint8_t ucLedFadeChannel = 15;	//ESP32 ledc
 static bool bAllowLedFade = true;
 #if defined(ARDUINO_ARCH_ESP32)
 int iAnalogWriteBits = 12;
@@ -1509,6 +1511,133 @@ void LeifSetAllowFadeLed(bool bAllowFade, int analogWriteBits)
 {
 	bAllowLedFade = bAllowFade;
 	iAnalogWriteBits = analogWriteBits;
+}
+#endif
+
+#if defined(ARDUINO_ARCH_ESP32)
+//---- Which peripheral drives the status LED fade ----------------------------------------------
+//Normally LEDC channel 15. A board that has spent all 16 LEDC channels on its own outputs -- the
+//16-channel RGBW panel controllers do exactly that -- has none left for the lamp, so those builds
+//fall back to a plain blink and the LED stops speaking the vocabulary in
+//misc\docs\esp-status-led-vocabulary.md. USE_MCPWM_FADE_LED moves the fade onto the motor-control
+//PWM unit instead, which nothing else in the fleet uses, and hands LEDC channel 15 back.
+//
+//⛔ The legacy driver/mcpwm.h API on purpose: it is the one MCPWM API that exists on BOTH core
+//1.0.6 and core 3.3.10, so the fleet keeps one code path across the migration instead of a pair.
+//IDF has deprecated it (it lives in libdriver.a as mcpwm_legacy.c, not in libesp_driver_mcpwm.a);
+//when the fleet reaches an IDF that drops it, these three functions are the only thing to rewrite.
+uint8_t ucLedFadeChannel = 15;	//ESP32 ledc
+
+#ifdef USE_MCPWM_FADE_LED
+#ifdef NO_FADE_LED
+//⛔ No apostrophes in the message: gcc lexes the tokens of a directive it is skipping, so one
+//would warn "missing terminating ' character" on every build of every project, not just this one.
+#error USE_MCPWM_FADE_LED and NO_FADE_LED contradict each other -- NO_FADE_LED compiles the fade away, so drop it from the defines
+#endif
+#define LEIF_MCPWM_UNIT		MCPWM_UNIT_0
+#define LEIF_MCPWM_TIMER	MCPWM_TIMER_0
+#define LEIF_MCPWM_OP		MCPWM_OPR_A
+#define LEIF_MCPWM_SIGNAL	MCPWM0A
+
+static int8_t iMcpwmForced=0;	//-1 held low, +1 held high, 0 modulating. Leaving a held state
+								//needs the duty type set again, so track it rather than writing
+								//the generator actions on every pass of the loop.
+#endif
+
+static void StatusLedFadeAttach(int iPin)
+{
+	if(iPin < 0)
+	{
+		return;
+	}
+#ifdef USE_MCPWM_FADE_LED
+	mcpwm_config_t conf;
+	memset(&conf, 0, sizeof(conf));
+	conf.frequency = 500;
+	conf.cmpr_a = 0;
+	conf.cmpr_b = 0;
+	conf.counter_mode = MCPWM_UP_COUNTER;
+	conf.duty_mode = MCPWM_DUTY_MODE_0;
+	mcpwm_gpio_init(LEIF_MCPWM_UNIT, LEIF_MCPWM_SIGNAL, iPin);
+	mcpwm_init(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, &conf);
+	iMcpwmForced = 0;
+#else
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+	ledcSetup(ucLedFadeChannel, 500, 12);
+	ledcAttachPin(iPin, ucLedFadeChannel);
+#else
+	ledcAttachChannel(iPin, 500, 12, ucLedFadeChannel);
+#endif
+#endif
+}
+
+//iDuty is 0..(1<<iBits)-1, already inverted by the caller if the board's lamp is active-low.
+static void StatusLedFadeWrite(int iPin, int iDuty, int iBits)
+{
+#ifdef USE_MCPWM_FADE_LED
+	(void) iPin;
+	int iMax = (1 << iBits) - 1;
+
+	//⛔ The ends are not duty values. A compare of 0 makes the generator go high at the period
+	//start and low on the same tick, which is a sliver, not darkness -- and the searching breath
+	//is specified to reach fully dark. So both ends hold the output instead of modulating it.
+	if(iDuty <= 0)
+	{
+		if(iMcpwmForced != -1)
+		{
+			mcpwm_set_signal_low(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, LEIF_MCPWM_OP);
+			iMcpwmForced = -1;
+		}
+		return;
+	}
+
+	if(iDuty >= iMax)
+	{
+		if(iMcpwmForced != 1)
+		{
+			mcpwm_set_signal_high(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, LEIF_MCPWM_OP);
+			iMcpwmForced = 1;
+		}
+		return;
+	}
+
+	mcpwm_set_duty(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, LEIF_MCPWM_OP, (iDuty * 100.0f) / iMax);
+
+	if(iMcpwmForced)
+	{
+		mcpwm_set_duty_type(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, LEIF_MCPWM_OP, MCPWM_DUTY_MODE_0);
+		iMcpwmForced = 0;
+	}
+#else
+	(void) iBits;
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+	(void) iPin;
+	ledcWrite(ucLedFadeChannel, iDuty);
+#else
+	ledcWrite(iPin, iDuty);
+#endif
+#endif
+}
+
+static void StatusLedFadeDetach(int iPin)
+{
+	if(iPin < 0)
+	{
+		return;
+	}
+#ifdef USE_MCPWM_FADE_LED
+	mcpwm_set_signal_low(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER, LEIF_MCPWM_OP);
+	iMcpwmForced = -1;
+	mcpwm_stop(LEIF_MCPWM_UNIT, LEIF_MCPWM_TIMER);
+	pinMatrixOutDetach(iPin, false, false);	//the pad is still MCPWM's until the matrix says otherwise
+	pinMode(iPin, OUTPUT);
+#else
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+	ledcDetachPin(iPin);
+#else
+	ledcDetach(iPin);
+#endif
+#endif
 }
 #endif
 
@@ -1682,15 +1811,9 @@ void LeifSetupBegin()
 		{
 			pinMode(iStatusLedPin, OUTPUT);
 #if defined(ARDUINO_ARCH_ESP32)
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-			ledcDetachPin(iStatusLedPin);
-#else
-			ledcDetach(iStatusLedPin);
+			StatusLedFadeDetach(iStatusLedPin);
 #endif
 			digitalWrite(iStatusLedPin, HIGH);
-#else
-			digitalWrite(iStatusLedPin, HIGH);
-#endif
 		}
 		DoOnShutdownCallback("OTA");
 		bUpdatingOTA = true;
@@ -1734,15 +1857,7 @@ void LeifSetupBegin()
 
 #else
 #if defined(ARDUINO_ARCH_ESP32)
-		if(iStatusLedPin >= 0)
-		{
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-			ledcSetup(ucLedFadeChannel, 500, 12);
-			ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
-#else
-			ledcAttachChannel(iStatusLedPin,500, 12, ucLedFadeChannel);
-#endif
-		}
+		StatusLedFadeAttach(iStatusLedPin);
 #else
 		analogWriteRange(1023);
 #endif
@@ -1756,11 +1871,7 @@ void LeifSetupBegin()
 				float temp = 1.0f - (value * 0.001f);
 				temp *= temp;
 				value = temp * 4095.0f;
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-				ledcWrite(ucLedFadeChannel, value);
-#else
-				ledcWrite(iStatusLedPin, value);
-#endif
+				StatusLedFadeWrite(iStatusLedPin, value, 12);
 #else
 				int value = (i * 200) % 1001;
 				analogWrite(iStatusLedPin, value);
@@ -1771,11 +1882,7 @@ void LeifSetupBegin()
 		if(iStatusLedPin >= 0)
 		{
 #if defined(ARDUINO_ARCH_ESP32)
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-			ledcDetachPin(iStatusLedPin);
-#else
-			ledcDetach(iStatusLedPin);
-#endif
+			StatusLedFadeDetach(iStatusLedPin);
 			digitalWrite(iStatusLedPin, LOW);
 #else
 			digitalWrite(iStatusLedPin, HIGH);
@@ -2061,17 +2168,7 @@ void LeifSetupBegin()
 #ifndef NO_FADE_LED
 	if(bAllowLedFade)
 	{
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-		ledcSetup(ucLedFadeChannel, 500, 12);
-		ledcAttachPin(iStatusLedPin, ucLedFadeChannel);
-
-#else
-
-		//bool ret=ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
-		bool ret=ledcAttachChannel(iStatusLedPin,500,12,ucLedFadeChannel);
-		//csprintf("ATTACH CHANNEL %i, led pin %i.   ret=%i\n",ucLedFadeChannel,iStatusLedPin,ret);
-#endif
-
+		StatusLedFadeAttach(iStatusLedPin);
 	}
 #endif
 #endif
@@ -2436,11 +2533,7 @@ void LeifUpdateStatusLED()
 
 #if defined(ARDUINO_ARCH_ESP32)
 
-#if ESP_ARDUINO_VERSION_MAJOR < 3
-			ledcWrite(ucLedFadeChannel, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
-#else
-			ledcWrite(iStatusLedPin, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);
-#endif
+			StatusLedFadeWrite(iStatusLedPin, bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use, iAnalogWriteBits);
 			//if(Interval100()) csprintf("use %i\n",use);
 			//if(Interval100()) csprintf("use after=%i %i\n",use,bInvertLedBlink?((1<<iAnalogWriteBits)-1)-use:use);
 			//if(Interval250()) csprintf("channel=%i  value=%i\n",ucLedFadeChannel,bInvertLedBlink ? ((1 << iAnalogWriteBits) - 1) - use : use);

@@ -62,6 +62,18 @@ The console has a fixed number of seats: five on ESP32 with Arduino core 3 or la
 
 Check what the sketch has left before raising the seat count. lwIP hands out one fixed table of socket descriptors for the whole device, and a busy sketch has usually spent most of it already (http listen, telnet listen, MQTT, OTA's UDP). Past that budget the accept never happens, so the client believes it connected and is then closed without a word.
 
+## The status LED
+
+The onboard LED breathes instead of blinking, and the shape says what the board is doing: a fast deep breath while it is looking for WiFi, a slow shallow one once it is on the network, two pulses and a pause while it is serving its own access point. `LeifSetStatusLedPin(pin)` picks the pin and `-1` turns it off. `LeifSetStatusLED_Override(true, duty)` hands the lamp to the sketch.
+
+On ESP32 the fade runs on LEDC channel 15. A sketch that has spent all sixteen LEDC channels on its own outputs has none left for it, and the only way out used to be `-DNO_FADE_LED` and a plain blink. Build with this instead and the fade moves to the motor-control PWM unit, which most boards never touch, so LEDC channel 15 goes back to the sketch:
+
+    -DUSE_MCPWM_FADE_LED
+
+It takes MCPWM unit 0, timer 0, operator A, and builds the same on Arduino core 1.x and 3.x. Drop `-DNO_FADE_LED` when you add it. The two contradict each other and the build says so.
+
+ESP8266 needs none of this. Its `analogWrite` is a software waveform generator, so there is no channel budget to run out of.
+
 ## dependencies (ESP32)
 
 ArduinoOTA
