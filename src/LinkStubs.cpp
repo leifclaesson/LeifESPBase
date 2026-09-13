@@ -1,18 +1,30 @@
-//Stubs that exist only to keep code OUT of the image -- the ESP32 counterpart of
-//arduino\Lightbulb\LinkStubs.cpp, which is the ESP8266 original.
-//Each one satisfies a reference from a precompiled ESP-IDF archive so the linker never opens
-//the member that would otherwise be dragged in. Measurements and the full reachability
-//working live in misc\docs\plans\lightbulb-esp32-pcf8574-size-audit-plan.md.
+//Stubs that exist only to keep code OUT of the image -- they are never called.
+//Each one satisfies a reference from a precompiled SDK archive (ESP-IDF on ESP32, the Espressif
+//SDK on ESP8266) so the linker never opens the member that would otherwise be dragged in.
 //
-//The AP/WPA3 pair is worth 84,576 B on Lightbulb_ESP32_PCF8574 (1,300,528 -> 1,215,952; margin
-//10,192 -> 94,768), proven on a bench board 2026-09-12: associates to WPA2-PSK, MQTT + PTP up,
-//OTA push accepted, all identical to stock, and a 6 h paired soak against a stock control.
-//(84,816 / 1,215,712 appear in older notes -- that was the loose measurement stub, before the
-//promotion into this file. The tracked build measures 1,215,952 exactly, 2026-09-13.)
+//⭐ ONE file for BOTH platforms, split by #ifdef -- the ESP8266 half moved in from
+//arduino\Lightbulb\LinkStubs.cpp on 2026-09-13, which is where this trick started.
+//Every block below is guarded by its architecture AND its flag, so a project that sets no cut
+//flag compiles this file to nothing at all.
+//
+//  ESP32    NO_HOST_AP + NO_WPA3 (+ NO_SOFT_AP)   84,576 B   SAE/SAE-PK/OWE + AP authenticator
+//  ESP32    NO_CAMELLIA_ARIA                       6,543 B   mbedtls ciphers nothing selects
+//  ESP32    NO_PPP                                19,351 B   lwIP's PPP / PPPoS stack
+//  ESP8266  NO_SOFT_AP                             3,088 B   LwipDhcpServer
+//  ESP8266  NO_HOST_AP                             7,397 B   ieee80211_hostap.o (+73 B RAM)
+//
+//Working: misc\docs\plans\lightbulb-esp32-pcf8574-size-audit-plan.md (ESP32) and
+//misc\docs\plans\lightbulb-esp8266-strip-plan.md (ESP8266).
+//
+//The ESP32 AP/WPA3 pair is worth 84,576 B on Lightbulb_ESP32_PCF8574 (1,300,528 -> 1,215,952;
+//margin 10,192 -> 94,768), proven on a bench board 2026-09-12: associates to WPA2-PSK, MQTT +
+//PTP up, OTA push accepted, all identical to stock, and a 6 h paired soak against a stock
+//control. (84,816 / 1,215,712 appear in older notes -- that was the loose measurement stub,
+//before the promotion into this file. The tracked build measures 1,215,952 exactly.)
 
 #include "LeifESPBase.h"
 
-//LEIF_LINKSTUBS_ANY and the list of what each flag cuts live in LinkStubsESP32.h, which
+//LEIF_LINKSTUBS_ANY and the list of what each flag cuts live in LinkStubs.h, which
 //LeifESPBase.h pulls in above -- the header has to make the same decision anyway, to know
 //whether LeifGetLinkStubHits() is a symbol here or an inline zero.
 
@@ -33,10 +45,10 @@
 //function-like macro that does not exist is a preprocessor SYNTAX error inside #if, not a
 //quietly-zero identifier -- so the guard would fail as a parse error instead of as this message.
 #ifndef ESP_ARDUINO_VERSION
-#error "LinkStubsESP32 needs arduino-esp32 3.3.x (ESP-IDF 5.5.4); this core is too old -- re-derive the stub set first"
+#error "The ESP32 link stubs need arduino-esp32 3.3.x (ESP-IDF 5.5.4); this core is too old -- re-derive the stub set first"
 #else
 #if ESP_ARDUINO_VERSION < ESP_ARDUINO_VERSION_VAL(3, 3, 0)
-#error "LinkStubsESP32 was derived against arduino-esp32 3.3.x / ESP-IDF 5.5.4 -- re-derive the stub set before using it on an older core"
+#error "The ESP32 link stubs were derived against arduino-esp32 3.3.x / ESP-IDF 5.5.4 -- re-derive the stub set before using it on an older core"
 #endif
 #endif
 
@@ -617,9 +629,108 @@ err_t_lwip pppos_input_sys(struct pbuf *p, struct netif *inp)
 #endif	//ARDUINO_ARCH_ESP32 && NO_PPP
 
 
+//=============================================================================================
+//ESP8266 -- NO_SOFT_AP (3,088 B) and NO_HOST_AP (7,397 B flash + 73 B RAM).
+//=============================================================================================
+//
+//The ESP8266 original, moved here from arduino\Lightbulb\LinkStubs.cpp on 2026-09-13 so that
+//both platforms live in one file. //Leif, 2026-09-13: "really it should just be one file:
+//linkstubs.cpp and then we can have ifdefs to apply it to the two different platforms."
+//Reasoning and measurements: misc\docs\plans\lightbulb-esp8266-strip-plan.md.
+//
+//⛔ These do NOT count a stub hit, and that is deliberate. LEIF_LINKSTUBS_ANY is set only on
+//ESP32, so on ESP8266 LeifGetLinkStubHits() stays the inline zero in LinkStubs.h and this move
+//changes nothing about what a bulb executes. Giving the ESP8266 stubs the same alarm is worth
+//doing, but it is a behaviour change to a live fleet image and is not what this move was.
+//
+//⛔ #include <ESP8266WiFi.h> below is load-bearing and must stay ahead of the canary: the
+//LEIF_NO_SOFT_AP_PATCH the canary tests for is defined by the vendored core itself, in
+//ESP8266WiFiAP.h:33, and is only visible once that header has been pulled in.
+
+#if defined(ARDUINO_ARCH_ESP8266) && defined(NO_SOFT_AP)
+
+#include <ESP8266WiFi.h>
+
+//A bulb is station-only, so lwIP never brings up an AP netif and never calls these.
+//Without them, lwip-git.o pulls in LwipDhcpServer -- a DHCP SERVER, 3,088 B.
+//The matching half is the NO_SOFT_AP gate vendored into the core's ESP8266WiFiAP.cpp;
+//this canary makes an SDK update that loses it a compile error rather than a bigger image.
+#ifndef LEIF_NO_SOFT_AP_PATCH
+#error "ESP8266WiFiAP.cpp lost its NO_SOFT_AP patch -- see misc/docs/plans/lightbulb-esp8266-strip-plan.md"
+#endif
+
+extern "C" void dhcps_start_LWIP2(void * info, void * apnetif)
+{
+	(void)info;
+	(void)apnetif;
+}
+
+extern "C" void dhcps_stop(void)
+{
+}
+
+#endif	//ARDUINO_ARCH_ESP8266 && NO_SOFT_AP
+
+#if defined(ARDUINO_ARCH_ESP8266) && defined(NO_HOST_AP)
+
+#ifndef NO_SOFT_AP
+#error "NO_HOST_AP cuts the AP-side receive and beacon code, so the soft AP cannot work -- set NO_SOFT_AP too"
+#endif
+
+//Eight definitions that between them satisfy every reference into the SDK's
+//ieee80211_hostap.o from outside it, so the linker never opens that member:
+//7,397 B of flash and 73 B of RAM a station-only bulb cannot use.
+//The five variables are storage-identical to the SDK's; what disappears is the AP-side
+//code that wrote them, and none of that runs in station mode.
+
+extern "C"
+{
+	//.bss in the SDK, so zero is the SDK's own starting value.
+	unsigned char BcnWithMcastSendCnt = 0;
+	unsigned char BcnEb_update = 0;
+	unsigned char ap_freq_force_to_scan = 0;
+	unsigned char PendFreeBcnEb = 0;
+
+	//⛔ 1 is the SDK's initial value and it is load-bearing. pp.o's receive dispatch
+	//reads this byte once and calls hostap_input only when it is NOT 1, so 1 is what
+	//makes the call below unreachable. Only the AP-side code we are cutting ever
+	//cleared it, which is why today's station-only image never reaches hostap_input
+	//either. Disassembly is in misc/docs/plans/lightbulb-esp8266-strip-plan.md.
+	unsigned char TmpSTAAPCloseAP = 1;
+
+	void ppRecycleRxPkt(void *pkt);
+
+	//Unreachable while TmpSTAAPCloseAP is 1. It still recycles the buffer, which is
+	//what pp.o itself does with a frame it declines to hand to the AP side -- so if a
+	//future SDK ever did reach here, it leaks nothing.
+	void hostap_input(void *conn, void *pkt, signed char rssi, int flag)
+	{
+		(void)conn;
+		(void)rssi;
+		(void)flag;
+		ppRecycleRxPkt(pkt);
+	}
+
+	//Called only for opmode 2 (SOFTAP) and 3 (STATIONAP); a bulb is opmode 1. Both
+	//call sites discard the return value.
+	int wifi_softap_start(void)
+	{
+		return 0;
+	}
+
+	int wifi_softap_stop(void)
+	{
+		return 0;
+	}
+}
+
+#endif	//ARDUINO_ARCH_ESP8266 && NO_HOST_AP
+
+
 //⛔ Defined ONLY when a cut was taken. The no-cut case is an inline zero in the header, so a
-//project that took no cut never has to carry this file -- see LinkStubsESP32.h for the ~60
-//projects that stopped linking when it did.
+//project that took no cut never has to carry this file -- see LinkStubs.h for the 102 of
+//105 projects that stopped linking when it did (counted by makefile inspection
+//2026-09-13; ESP8266 included, because the old declaration had no arch guard).
 #ifdef LEIF_LINKSTUBS_ANY
 uint32_t LeifGetLinkStubHits()
 {
