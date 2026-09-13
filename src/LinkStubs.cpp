@@ -10,6 +10,7 @@
 //  ESP32    NO_HOST_AP + NO_WPA3 (+ NO_SOFT_AP)   84,576 B   SAE/SAE-PK/OWE + AP authenticator
 //  ESP32    NO_CAMELLIA_ARIA                       6,543 B   mbedtls ciphers nothing selects
 //  ESP32    NO_PPP                                19,351 B   lwIP's PPP / PPPoS stack
+//  ESP32    NO_IPV6                               16,377 B   lwIP IPv6 -- nd6/ip6/mld6/dhcp6
 //  ESP8266  NO_SOFT_AP                             3,088 B   LwipDhcpServer
 //  ESP8266  NO_HOST_AP                             7,397 B   ieee80211_hostap.o (+73 B RAM)
 //
@@ -628,6 +629,316 @@ err_t_lwip pppos_input_sys(struct pbuf *p, struct netif *inp)
 
 #endif	//ARDUINO_ARCH_ESP32 && NO_PPP
 
+
+//=============================================================================================
+//NO_IPV6 -- 16,377 B. nd6, ip6, mld6, ip6_frag, dhcp6, icmp6, ip6_addr, ethip6 in liblwip.a.
+//=============================================================================================
+//
+////Leif, 2026-09-13: "Oh heck yes, get rid of IPv6. I never use that. I disable it wherever I
+//come across it."
+//
+//⭐ Why there is nothing to lose, established by CALL GRAPH and not by a config flag: on
+//ESP-IDF an interface gets no IPv6 address at all until something calls
+//esp_netif_create_ip6_linklocal(). The only STA call site (libraries/WiFi/src/STA.cpp:129) is
+//gated on ESP_NETIF_WANT_IP6_BIT, which only enableIPv6(true) sets
+//(Network/src/NetworkInterface.cpp:332); the one indirect route (WiFiMulti.cpp:328) needs
+//ipv6_support, which its own constructor sets false. Neither Lightbulb nor LeifESPBase calls
+//any of them, and WiFiMulti is not used at all. ⇒ no address is ever formed, so there is no
+//SLAAC, no DHCPv6 and no MLD membership to lose.
+//⛔ An earlier verdict called IPv6 "a live subsystem". That was reasoned from sdkconfig, which
+//says what was COMPILED, never what is REACHED.
+//
+//---------------------------------------------------------------------------------------------
+//⛔⛔ This is the cut where "these stubs are never called" is FLATLY FALSE.
+//---------------------------------------------------------------------------------------------
+//SEVEN of the 24 are entered on completely healthy, ordinary paths -- more than every other cut
+//in this file put together. All seven are therefore UNCOUNTED, for the reason ppp_init()
+//already documents: a counter that reads non-zero on a healthy board from the first second is
+//not an alarm, it is a tally.
+//
+//⭐ With seven of them the case-by-case reading ppp_init got is not enough, so here is the rule
+//it generalises to: COUNT A STUB IF AND ONLY IF ENTERING IT SAYS THE PREMISE OF THE CUT IS
+//WRONG. Not "if it never runs" -- that is a weaker and less useful test. Every one of the
+//seven below is called unconditionally from a netif lifecycle hook, a timer wheel or a frame
+//demux, with no test of any IPv6 state anywhere ahead of it, so its entry carries exactly zero
+//information about whether this board uses IPv6. The seventeen in Class U all sit behind an
+//IP_IS_V6() on a pcb, an address or a socket family, so entering one means an IPv6 address was
+//formed -- which is the premise, failing.
+//
+//Every line below was established by relocation and by disassembling the caller, not by
+//reading lwIP source:
+//
+//  ip6_input            ethernet_input() -- EVERY received IPv6 frame. Leif's UniFi gear emits
+//                       router advertisements, so this runs in a completely quiet house.
+//  nd6_tmr, dhcp6_tmr   the lwIP cyclic timer wheel. From boot, forever.
+//  nd6_restart_netif    netif_add(), netif_set_up(), netif_set_link_up() -- unconditional in
+//                       all three. Boot, and then every association.
+//  nd6_cleanup_netif    netif_set_down() -- unconditional. Every disconnect.
+//  mld6_report_groups   netif_issue_reports(), which netif_set_up() and netif_set_link_up()
+//                       both call with report_type 3 (IPV4|IPV6). ⛔ The NETIF_FLAG_MLD6 guard
+//                       that lwIP's source suggests is NOT emitted on this path -- the only
+//                       test before the call is flags & (UP|LINK_UP).
+//  mld6_stop            netif_remove() -- unconditional. (The flag test just above it in the
+//                       disassembly guards igmp_stop, not this.)
+//
+//⛔ bench\callsites.py reports "no relocation in this member" for nd6_tmr and dhcp6_tmr, which
+//reads exactly like "nothing calls it". It is not. Both are ADDRESS-TAKEN into
+//lwip_cyclic_timers[] in timeouts.c.obj -- R_XTENSA_32 at +0x1c and +0x24, sitting immediately
+//beside tcp_tmr, etharp_tmr and dhcp_coarse_tmr -- and dispatched indirectly off the wheel.
+//callsites.py walks .text relocations only, so it is blind to a DATA reference, and it fails
+//silent and clean: the one direction a reachability argument must never get wrong. Same shape
+//as the bare-archive-name bug already fixed in that file. ⇒ For any stub whose caller is a
+//table rather than a call site, `objdump -r <member> | grep <symbol>` is the check that works.
+//
+//---------------------------------------------------------------------------------------------
+//⛔ Two stubs are handed a pbuf, and the right answer is OPPOSITE for the two.
+//---------------------------------------------------------------------------------------------
+//  ip6_input            OWNS it and must FREE it. ethernet_input() calls it at +0x106 and jumps
+//                       straight to its epilogue at +0x10c; the pbuf_free at +0x110 is on the
+//                       pbuf_remove_header FAILURE path and is never reached afterwards. A stub
+//                       that merely returns leaks one pbuf per router advertisement -- a slow
+//                       leak no short test would ever see.
+//  icmp6_dest_unreach   must NOT free. udp_input() calls it at +0x28a and then jumps to +0x42,
+//                       whose +0x44 is its own pbuf_free. Freeing here is a DOUBLE free.
+//⛔ So "it takes a pbuf, therefore free it" is precisely the wrong generalisation. The caller's
+//epilogue decides, and only the disassembly says which.
+//
+//---------------------------------------------------------------------------------------------
+//⛔ ip6_addr_any is a VARIABLE, and it is NOT all-zero.
+//---------------------------------------------------------------------------------------------
+//nm type R, 24 bytes in .rodata, 4-aligned. Its bytes are twenty zeros and then 06 -- the
+//ip_addr_t type tag, IPADDR_TYPE_V6, at offset 20. A zeroed object would read as
+//IPADDR_TYPE_V4 to netconn_bind(), lwip_netconn_do_bind() and lwip_netconn_do_listen(), which
+//is a DIFFERENT value and not a safe one. It is defined below with lwIP's own IPADDR6_INIT, so
+//it cannot drift from what the SDK means by it.
+//
+//---------------------------------------------------------------------------------------------
+//⭐ Why this block includes the real lwIP headers when the ones above declare their own types.
+//---------------------------------------------------------------------------------------------
+//All 24 symbols are declared in PUBLIC lwip/*.h headers, unlike the wpa_supplicant and PPP
+//internals above. Including them makes the compiler check all 24 signatures against the very
+//SDK being linked, so a future core that re-signatures one of these fails the BUILD instead of
+//failing a board in a breaker cabinet. That is a stronger interlock than the version canary at
+//the top of this file, and it costs nothing.
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(NO_IPV6)
+
+#include "lwip/err.h"
+#include "lwip/pbuf.h"
+#include "lwip/netif.h"
+#include "lwip/ip.h"
+#include "lwip/ip6.h"
+#include "lwip/ip_addr.h"
+#include "lwip/inet.h"
+#include "lwip/icmp6.h"
+#include "lwip/mld6.h"
+#include "lwip/nd6.h"
+#include "lwip/dhcp6.h"
+#include "lwip/ethip6.h"
+
+extern "C"
+{
+
+//--- Class R: REACHED on a healthy board. ⛔ None of these may count a hit. ------------------
+
+//⛔ Frees. See the pbuf note above -- ethernet_input() does not.
+err_t ip6_input(struct pbuf *p, struct netif *inp)
+{
+	(void) inp;
+	pbuf_free(p);
+	return ERR_OK;					//the frame was consumed, which is the truth
+}
+
+//On the cyclic timer wheel from boot. No IPv6 state exists for them to age.
+void nd6_tmr(void)
+{
+}
+
+void dhcp6_tmr(void)
+{
+}
+
+//netif_add / netif_set_up / netif_set_link_up. The real one restarts RA solicitation for an
+//interface that has no IPv6 address to solicit for.
+void nd6_restart_netif(struct netif *netif)
+{
+	(void) netif;
+}
+
+//netif_set_down. The real one drops this netif's neighbour and destination cache entries;
+//there are none.
+void nd6_cleanup_netif(struct netif *netif)
+{
+	(void) netif;
+}
+
+//netif_issue_reports. The real one re-sends MLD membership reports for groups this netif
+//joined; it joined none.
+void mld6_report_groups(struct netif *netif)
+{
+	(void) netif;
+}
+
+//netif_remove. Same argument -- there is no membership list to tear down.
+err_t mld6_stop(struct netif *netif)
+{
+	(void) netif;
+	return ERR_OK;					//nothing to stop, so stopping succeeded
+}
+
+//--- Class U: unreachable unless a premise of the cut is wrong. These DO count. --------------
+//Every one sits behind an IP_IS_V6() test on a pcb, an address or a socket family, and no
+//IPv6 address is ever formed on this board. A hit here means one was.
+//⭐ That guard is not taken on trust -- udp_bind() compiles it to l8ui a8,a3,20 / bnei a8,6,
+//i.e. "load the ip_addr_t type tag and branch away unless it is IPADDR_TYPE_V6", with the
+//ip6_route call on the far side. So the byte that gates every stub in this class is the SAME
+//byte that ip6_addr_any above had to carry correctly. Get that 06 wrong and you have not
+//merely stored a wrong constant -- you have moved addresses across this very fence.
+
+//ip6.c -- routing and output. Reached from raw/udp/tcp only for a v6 pcb.
+struct netif * ip6_route(const ip6_addr_t *src, const ip6_addr_t *dest)
+{
+	(void) src; (void) dest;
+	STUB_HIT();
+	return 0;					//no route -- callers all test for NULL
+}
+
+const ip_addr_t * ip6_select_source_address(struct netif *netif, const ip6_addr_t *dest)
+{
+	(void) netif; (void) dest;
+	STUB_HIT();
+	return 0;					//no source address exists; callers test for NULL
+}
+
+err_t ip6_output_if(struct pbuf *p, const ip6_addr_t *src, const ip6_addr_t *dest,
+		u8_t hl, u8_t tc, u8_t nexth, struct netif *netif)
+{
+	(void) p; (void) src; (void) dest; (void) hl; (void) tc; (void) nexth; (void) netif;
+	STUB_HIT();
+	//⛔ Does NOT free p. lwIP's ip6_output_if does not consume the pbuf on failure either --
+	//the caller (tcp_output, raw_sendto_if_src) owns it and frees it on a non-OK return.
+	return ERR_RTE;					//no route to host, which is exactly true
+}
+
+err_t ip6_output_if_src(struct pbuf *p, const ip6_addr_t *src, const ip6_addr_t *dest,
+		u8_t hl, u8_t tc, u8_t nexth, struct netif *netif)
+{
+	(void) p; (void) src; (void) dest; (void) hl; (void) tc; (void) nexth; (void) netif;
+	STUB_HIT();
+	return ERR_RTE;
+}
+
+//ethip6.c -- address-taken into netif->output_ip6 by wlanif.c, ethernetif.c and bridgeif_init().
+//It is only ever CALLED through ip6_output_if above, which never gets that far.
+err_t ethip6_output(struct netif *netif, struct pbuf *q, const ip6_addr_t *ip6addr)
+{
+	(void) netif; (void) q; (void) ip6addr;
+	STUB_HIT();
+	return ERR_RTE;
+}
+
+//icmp6.c -- udp_input() on a v6 datagram to a closed port.
+//⛔ Does NOT free p. udp_input() frees it immediately after this returns; see the pbuf note.
+void icmp6_dest_unreach(struct pbuf *p, enum icmp6_dur_code c)
+{
+	(void) p; (void) c;
+	STUB_HIT();
+}
+
+//ip6_addr.c -- the text forms, reached from ipaddr_aton()/ipaddr_ntoa() and inet_pton()/ntop()
+//only once the string or the address has already been decided to be v6.
+int ip6addr_aton(const char *cp, ip6_addr_t *addr)
+{
+	(void) cp; (void) addr;
+	STUB_HIT();
+	return 0;					//"not a valid IPv6 address" -- true here
+}
+
+char * ip6addr_ntoa(const ip6_addr_t *addr)
+{
+	(void) addr;
+	STUB_HIT();
+	return 0;
+}
+
+char * ip6addr_ntoa_r(const ip6_addr_t *addr, char *buf, int buflen)
+{
+	(void) addr; (void) buf; (void) buflen;
+	STUB_HIT();
+	return 0;					//lwIP's own "did not fit" return; callers handle it
+}
+
+//⭐ The one DATA symbol in this file. 24 bytes, and the 06 at offset 20 is load-bearing --
+//IPADDR_TYPE_V6. Built from lwIP's own macro so it cannot drift from the SDK's meaning.
+//Referenced (address-taken) by netconn_bind(), lwip_netconn_do_bind() and
+//lwip_netconn_do_listen() -- and, in libesp_netif.a, by esp_netif_down_api(),
+//esp_netif_get_all_ip6() and esp_netif_get_all_preferred_ip6().
+//⛔ esp_netif_down_api() is a NORMAL path -- it runs every time the interface goes down. So
+//this object is genuinely read on a healthy board, which is what makes the 06 concrete rather
+//than theoretical: a zeroed object would have that path handling an IPADDR_TYPE_V4 "any"
+//where an IPADDR_TYPE_V6 one belongs. This is the one symbol in this cut whose VALUE, not
+//whose mere existence, has to be right.
+const ip_addr_t ip6_addr_any = IPADDR6_INIT(0, 0, 0, 0);
+
+//mld6.c -- the join/leave API, reached from setsockopt(IPV6_JOIN_GROUP) and netconn's
+//join_leave_group, and from esp_netif_join_ip6_multicast_group(). Nothing here calls any.
+err_t mld6_joingroup(const ip6_addr_t *srcaddr, const ip6_addr_t *groupaddr)
+{
+	(void) srcaddr; (void) groupaddr;
+	STUB_HIT();
+	return ERR_VAL;
+}
+
+err_t mld6_joingroup_netif(struct netif *netif, const ip6_addr_t *groupaddr)
+{
+	(void) netif; (void) groupaddr;
+	STUB_HIT();
+	return ERR_VAL;
+}
+
+err_t mld6_leavegroup(const ip6_addr_t *srcaddr, const ip6_addr_t *groupaddr)
+{
+	(void) srcaddr; (void) groupaddr;
+	STUB_HIT();
+	return ERR_VAL;
+}
+
+err_t mld6_leavegroup_netif(struct netif *netif, const ip6_addr_t *groupaddr)
+{
+	(void) netif; (void) groupaddr;
+	STUB_HIT();
+	return ERR_VAL;
+}
+
+//nd6.c -- the three that are NOT on a netif lifecycle path.
+//⭐ nd6_adjust_mld_membership is the near miss: netif_ip6_addr_set_state() does call it, and
+//that is a netif function -- but only after an early-out on (old_state == new_state) and a
+//test of NETIF_FLAG_MLD6. No IPv6 address is ever formed, so no address slot ever changes
+//state. This one stays COUNTED where its five siblings above do not.
+void nd6_adjust_mld_membership(struct netif *netif, s8_t addr_idx, u8_t new_state)
+{
+	(void) netif; (void) addr_idx; (void) new_state;
+	STUB_HIT();
+}
+
+//tcp_eff_send_mss_netif(), behind IP_IS_V6 on the pcb.
+u16_t nd6_get_destination_mtu(const ip6_addr_t *ip6addr, struct netif *netif)
+{
+	(void) ip6addr; (void) netif;
+	STUB_HIT();
+	return 0;					//"no cached MTU" -- the caller then uses its default
+}
+
+//tcp_receive(), behind ip_current_is_v6().
+void nd6_reachability_hint(const ip6_addr_t *ip6addr)
+{
+	(void) ip6addr;
+	STUB_HIT();
+}
+
+}	//extern "C"
+
+#endif	//ARDUINO_ARCH_ESP32 && NO_IPV6
 
 //=============================================================================================
 //ESP8266 -- NO_SOFT_AP (3,088 B) and NO_HOST_AP (7,397 B flash + 73 B RAM).

@@ -9,6 +9,7 @@
 //  ESP32    NO_HOST_AP + NO_WPA3 (+ NO_SOFT_AP)   84,576 B   SAE/SAE-PK/OWE + AP authenticator
 //  ESP32    NO_CAMELLIA_ARIA                       6,543 B   mbedtls ciphers nothing selects
 //  ESP32    NO_PPP                                19,351 B   lwIP's PPP / PPPoS stack
+//  ESP32    NO_IPV6                               16,377 B   lwIP IPv6 -- nd6/ip6/mld6/dhcp6
 //  ESP8266  NO_SOFT_AP                             3,088 B   LwipDhcpServer
 //  ESP8266  NO_HOST_AP                             7,397 B   ieee80211_hostap.o (+73 B RAM)
 //
@@ -17,7 +18,8 @@
 //misc\docs\plans\lightbulb-esp8266-strip-plan.md.
 //---------------------------------------------------------------------------------------------
 #if defined(ARDUINO_ARCH_ESP32) && \
-	(defined(NO_HOST_AP) || defined(NO_WPA3) || defined(NO_CAMELLIA_ARIA) || defined(NO_PPP))
+	(defined(NO_HOST_AP) || defined(NO_WPA3) || defined(NO_CAMELLIA_ARIA) || \
+	defined(NO_PPP) || defined(NO_IPV6))
 #define LEIF_LINKSTUBS_ANY 1
 #endif
 
