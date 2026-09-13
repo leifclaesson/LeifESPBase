@@ -693,7 +693,9 @@ err_t_lwip pppos_input_sys(struct pbuf *p, struct netif *inp)
 //---------------------------------------------------------------------------------------------
 //⛔ Two stubs are handed a pbuf, and the right answer is OPPOSITE for the two.
 //---------------------------------------------------------------------------------------------
-//  ip6_input            OWNS it and must FREE it. ethernet_input() calls it at +0x106 and jumps
+//  ip6_input            OWNS it on BOTH of its call paths and must FREE it. ip_input() is a
+//                       two-branch dispatcher (bnei version,6 -> ip4_input, else ip6_input) with
+//                       no pbuf_free anywhere in it. ethernet_input() calls it at +0x106 and jumps
 //                       straight to its epilogue at +0x10c; the pbuf_free at +0x110 is on the
 //                       pbuf_remove_header FAILURE path and is never reached afterwards. A stub
 //                       that merely returns leaks one pbuf per router advertisement -- a slow
