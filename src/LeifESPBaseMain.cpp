@@ -2183,16 +2183,6 @@ void LeifSetupBegin()
 			}
 			s += temp;
 
-#if !defined(NO_FIRMWARE_READBACK)
-			//Said here because the moment this matters is the moment nobody remembers it exists:
-			//the slot an OTA is about to land in still holds the PREVIOUS firmware until it does.
-			if(nxt)
-			{
-				sprintf(temp, "Read it back.....: /firmware.bin downloads %s (the previous firmware), ?slot=running for this one\n", nxt->label);
-				s += temp;
-			}
-#endif
-
 			//App slots first, then data. ⛔ Not one pass over ESP_PARTITION_TYPE_ANY -- that value
 			//arrived with IDF 4, so it does not compile for the core 1.0.6 fleet, which is exactly
 			//the fleet this page has to be readable on.
