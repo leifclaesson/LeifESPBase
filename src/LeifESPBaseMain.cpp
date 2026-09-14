@@ -1948,6 +1948,108 @@ void LeifSetupBegin()
 		LeifScheduleForceReconnect(1000);	//defer the disconnect so this response reaches the client first
 	});
 
+#if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
+	//Hand the firmware sitting in a flash slot back over HTTP, so a build that exists ONLY on a
+	//board can be recovered instead of dying the next time that board is flashed.
+	//
+	//Leif, 2026-09-14: "there are two OTA slots, right? So, couldn't we right now technically add
+	//a feature to LeifESPBase that lets us download the firmware through an HTTP endpoint?
+	//Because if we then upload that new firmware, we should be able to use that to download what
+	//was there before once."
+	//
+	//That is exactly right, and the reason it works is that an OTA never writes into the slot it
+	//is running FROM -- it fills the other slot and only switches over once that has verified. So
+	//the firmware a board is running survives the push that replaces it, and then sits in the idle
+	//slot until the push AFTER that lands on top of it. One push buys one recovery. Which also
+	//means a failed push costs nothing: while the wanted firmware is the running one it cannot be
+	//written to at all, so only a SUCCESSFUL push starts the clock.
+	//
+	//	/firmware.bin					the idle slot -- the previous firmware. The recovery
+	//									case, so it is the default.
+	//	/firmware.bin?slot=running		what this board is running right now.
+	//	/firmware.bin?slot=ota_0		any app partition, by the label /sysinfo lists for it.
+	//
+	//The WHOLE partition is served raw, trailing padding and all, rather than just the image
+	//inside it. Finding where an image ends means walking its segment headers on the board, and a
+	//bug there would silently truncate what may be the only surviving copy of that firmware --
+	//whereas trimming afterwards on a PC can be checked before it is trusted. esptool image-info
+	//reads a padded image without complaint, so nothing downstream needs the trim.
+	//
+	//The outputs FREEZE for the length of the transfer -- this runs on loopTask like every other
+	//page, and the slot is ~2 MB. That is a fair price for a deliberate recovery and would not be
+	//for anything automatic. The task WDT is fed per chunk because loopTask is registered with it
+	//and the whole transfer happens inside this one handler call.
+	server.on("/firmware.bin", []()
+	{
+		const esp_partition_t * part = NULL;
+		String slot = server.hasArg("slot") ? server.arg("slot") : String("idle");
+
+		if(slot == "idle")
+		{
+			part = esp_ota_get_next_update_partition(NULL);
+		}
+		else if(slot == "running")
+		{
+			part = esp_ota_get_running_partition();
+		}
+		else
+		{
+			//TYPE_APP, never TYPE_ANY: that value arrived with IDF 4 and would not compile for the
+			//core 1.0.6 boards, which are exactly the old boards most worth reading back.
+			part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, slot.c_str());
+		}
+
+		if(!part)
+		{
+			server.send(404, PSTR("text/plain"), PSTR("no such app partition -- use slot=idle, slot=running, or a label from the table on /sysinfo\n"));
+			return;
+		}
+
+		//One TCP segment at a time. A larger buffer does not go faster here and this one has to
+		//come out of a heap that is already carrying the output buffers.
+		const size_t chunk = 1460;
+		uint8_t * buf = (uint8_t *) malloc(chunk);
+		if(!buf)
+		{
+			server.send(503, PSTR("text/plain"), PSTR("no memory for the read buffer -- retry when the board is quieter\n"));
+			return;
+		}
+
+		char disp[160];
+		sprintf(disp, PSTR("attachment; filename=\"%s-%s.bin\""), GetHostName(), part->label);
+		server.sendHeader(PSTR("Content-Disposition"), disp);
+		server.setContentLength(part->size);
+		server.send(200, PSTR("application/octet-stream"), "");
+
+		size_t offset = 0;
+		while(offset < part->size)
+		{
+			size_t n = part->size - offset;
+			if(n > chunk) n = chunk;
+
+			if(esp_partition_read(part, offset, buf, n) != ESP_OK)
+			{
+				//Stop dead rather than pad over the gap. The promised Content-Length then does not
+				//arrive, so the client sees a broken download -- which is what we want: a short
+				//file announces itself, a file with a silent hole in it does not, and this may be
+				//the only copy of that firmware in existence.
+				csprintf(PSTR("/firmware.bin: read failed at 0x%06X of %s -- cutting the transfer short\n"), (unsigned) offset, part->label);
+				break;
+			}
+
+			server.sendContent((const char *) buf, n);
+			offset += n;
+
+			esp_task_wdt_reset();
+			delay(0);	//let WiFi and the idle task run between segments
+		}
+
+		free(buf);
+
+		csprintf(PSTR("/firmware.bin: sent %u of %u bytes from %s\n"), (unsigned) offset, (unsigned) part->size, part->label);
+	});
+#endif
+
 	server.on("/sysinfo", []()
 	{
 #ifdef MMU_EXTERNAL_HEAP
@@ -2080,6 +2182,16 @@ void LeifSetupBegin()
 				sprintf(temp, "OTA lands in.....: nowhere -- single-app layout, no over-the-air update possible\n");
 			}
 			s += temp;
+
+#if !defined(NO_FIRMWARE_READBACK)
+			//Said here because the moment this matters is the moment nobody remembers it exists:
+			//the slot an OTA is about to land in still holds the PREVIOUS firmware until it does.
+			if(nxt)
+			{
+				sprintf(temp, "Read it back.....: /firmware.bin downloads %s (the previous firmware), ?slot=running for this one\n", nxt->label);
+				s += temp;
+			}
+#endif
 
 			//App slots first, then data. ⛔ Not one pass over ESP_PARTITION_TYPE_ANY -- that value
 			//arrived with IDF 4, so it does not compile for the core 1.0.6 fleet, which is exactly
