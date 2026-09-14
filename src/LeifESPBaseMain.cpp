@@ -161,6 +161,60 @@ void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb)
 	}
 }
 
+#ifndef NO_TOOLS_PAGE
+
+//Console commands a project has declared, in the order it declared them -- the order a help
+//line should read in, which is a judgement only the project can make, so it is kept and never
+//sorted. Pointers only: every argument is a string literal that outlives the board.
+struct LeifDeclaredCommand
+{
+	const char * pszCommand;
+	const char * pszDescription;
+};
+static std::vector<LeifDeclaredCommand> g_vecDeclaredCommands;
+
+void LeifDeclareCommand(const char * pszCommand, const char * pszDescription)
+{
+	if(!pszCommand || !*pszCommand) return;
+
+	LeifDeclaredCommand cmd;
+	cmd.pszCommand=pszCommand;
+	cmd.pszDescription=pszDescription?pszDescription:"";
+	g_vecDeclaredCommands.push_back(cmd);
+}
+
+static bool g_bToolsLinkHandledByProject=false;
+void LeifToolsLinkHandledByProject() { g_bToolsLinkHandledByProject=true; }
+
+void LeifDeclaredCommandsText(String & out, bool bNamesOnly)
+{
+	out="";
+
+	size_t i;
+	for(i=0;i<g_vecDeclaredCommands.size();i++)
+	{
+		const LeifDeclaredCommand & cmd=g_vecDeclaredCommands[i];
+
+		if(bNamesOnly)
+		{
+			if(i) out.concat(PSTR("  "));
+			out.concat(cmd.pszCommand);
+		}
+		else
+		{
+			out.concat(cmd.pszCommand);
+			if(*cmd.pszDescription)
+			{
+				out.concat(PSTR(" -- "));
+				out.concat(cmd.pszDescription);
+			}
+			out.concat(PSTR("\n"));
+		}
+	}
+}
+
+#endif
+
 
 #if defined(ARDUINO_ARCH_ESP32)
 
@@ -2275,6 +2329,95 @@ void LeifSetupBegin()
 		server.send(200, PSTR("text/plain"), s);
 	});
 
+#ifndef NO_TOOLS_PAGE
+	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
+	//the main menu." The things this library can do that no menu has ever pointed at -- which is
+	//most of them, because a menu is built in each sketch and the library cannot add a cell to it.
+	//
+	//⛔ This is deliberately NOT a section on /sysinfo. //Leif, 2026-09-14: "let's not bloat sys
+	//info with links to other things." /sysinfo answers "what is this board doing"; this page
+	//answers "what can I do to it", and the two stay apart.
+	//
+	//It renders its own page shell rather than the sketch's, because the sketch's belongs to the
+	//sketch: genHtmlPage is a different function with a different name in every project and the
+	//library has never been able to call it. Plain markup, no CSS beyond the table borders every
+	//other page here uses, so it looks like the rest without pretending to be part of it.
+	server.on("/tools", []()
+	{
+		String s;
+		s.reserve(2048);
+
+		s.concat(PSTR("<!DOCTYPE html><meta name=\"viewport\" content=\"width=device-width, initial-scale=0.95\">"
+				"<html><head><style>table, th, td { border: 1px solid black; border-collapse: collapse;}"
+				"th, td { padding: 5px;}</style></head><body><h2>Tools - "));
+		s.concat(GetHostName());
+		s.concat(PSTR("</h2><p><a href=\"/\">Back to the main page</a></p>"));
+
+#if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
+		s.concat(PSTR("<h3>Firmware readback</h3>"
+				"<p>An update never writes into the slot it is running from, so the firmware this board "
+				"was running before the last successful push is still sitting in the idle slot. "
+				"<b>One push buys one recovery</b> -- the push after this one lands on top of it. "
+				"The outputs freeze for the few seconds a slot takes to download.</p>"
+				"<table><tr><th>Slot</th><th>Partition</th><th>Size</th><th></th></tr>"));
+
+		//Named by what they ARE to the reader, not by label: which of app0/app1 is idle changes
+		//with every push, and the label alone is the one thing that cannot be acted on.
+		const esp_partition_t * parts[2];
+		const char * pszWhat[2];
+		parts[0]=esp_ota_get_next_update_partition(NULL);	pszWhat[0]=PSTR("idle -- the previous firmware");
+		parts[1]=esp_ota_get_running_partition();			pszWhat[1]=PSTR("running -- what is on this board now");
+
+		int slot;
+		for(slot=0;slot<2;slot++)
+		{
+			if(!parts[slot]) continue;
+
+			char temp[256];
+			sprintf(temp, PSTR("<tr><td>%s</td><td>%s</td><td>%u bytes (%u KB)</td>"
+					"<td><a href=\"/firmware.bin?slot=%s\">download</a></td></tr>"),
+					pszWhat[slot], parts[slot]->label,
+					(unsigned) parts[slot]->size, (unsigned) (parts[slot]->size/1024),
+					slot?"running":"idle");
+			s.concat(temp);
+		}
+
+		s.concat(PSTR("</table>"));
+#endif
+
+		s.concat(PSTR("<h3>Console commands</h3>"));
+
+		String strCommands;
+		LeifDeclaredCommandsText(strCommands, false);
+
+		if(strCommands.length())
+		{
+			s.concat(PSTR("<p>Type these on the telnet console (port 23) or the serial console.</p><pre>"));
+			//Emitted as-is: a declaration is a string literal written by whoever wrote the command,
+			//so the declarer owns its markup and its escaping, exactly as LeifRegisterGetApRxText does.
+			s.concat(strCommands);
+			s.concat(PSTR("</pre>"));
+		}
+		else
+		{
+			s.concat(PSTR("<p>This project has not declared any. The console still works -- every project "
+					"registers one callback that receives whatever was typed, so there is no list to show "
+					"until the project writes one. It declares them with <tt>LeifDeclareCommand()</tt>.</p>"));
+		}
+
+		s.concat(PSTR("<h3>Endpoints</h3><table>"
+				"<tr><td><a href=\"/ping\">/ping</a></td><td>the smallest page this board can serve -- is it alive at all</td></tr>"
+				"<tr><td><a href=\"/sysinfo\">/sysinfo</a></td><td>chip, flash, partitions, heap, uptime, WiFi</td></tr>"
+				"<tr><td><a href=\"/wifireconnect\">/wifireconnect</a></td><td>drop the association and re-scan for the strongest AP</td></tr>"
+#if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
+				"<tr><td>/firmware.bin</td><td>a flash slot, raw -- <tt>?slot=idle</tt> (default), <tt>?slot=running</tt>, or <tt>?slot=&lt;label&gt;</tt> from /sysinfo</td></tr>"
+#endif
+				"</table></body></html>"));
+
+		server.send(200, PSTR("text/html"), s);
+	});
+#endif
+
 
 #if defined(ARDUINO_ARCH_ESP32)
 #ifndef NO_FADE_LED
@@ -3399,7 +3542,21 @@ void LeifHtmlMainPageCommonHeader(String & string)
 		fnHttpMainTableCallback(string, eHttpMainTable_AfterLastRow);
 	}
 
-	string.concat(PSTR("</table><br>"));
+	string.concat(PSTR("</table>"));
+
+#ifndef NO_TOOLS_PAGE
+	//The one link the library is able to place by itself. Every sketch builds its own nav row in
+	//its own differently named function, so the library has never been able to add a cell to one
+	//-- and /tools would then be a page that only somebody who already knew about it could reach.
+	//This costs no project an edit. A project that puts the link in its own menu says so with
+	//LeifToolsLinkHandledByProject() and this one stops, rather than showing up twice on one page.
+	if(!g_bToolsLinkHandledByProject)
+	{
+		string.concat(PSTR("<a href=\"/tools\">Tools</a>"));
+	}
+#endif
+
+	string.concat(PSTR("<br>"));
 
 
 }

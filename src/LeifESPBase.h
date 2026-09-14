@@ -240,6 +240,57 @@ void LeifSetInterimCallback(fn_LeifESPBaseInterimCallback cb);	//this function w
 typedef std::function<void(String & out)> fn_LeifESPBaseSysinfoSection;
 void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb);	//appended to the end of /sysinfo, in the order added. This is how a module adds its own lines to the shared page. Registering a second server.on("/sysinfo") does NOT work: WebServer serves the FIRST handler that matches, and the library's is registered in LeifSetupBegin() before any sketch code runs, so the later one is silently unreachable.
 
+//---- /tools ---------------------------------------------------------------------------------
+//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from the
+//main menu" -- a home for the things this library can already do that no menu has ever pointed
+//at. The PAGE belongs to the library, so every project gets it by existing. What it LISTS is
+//opt-in, because only a project knows its own console commands.
+//
+//Every project registers ONE console callback (LeifRegisterCommandCallback) that receives
+//whatever was typed, so command names and meanings exist only inside that project's own if
+//chain and nothing can enumerate them. A project declares what it understands:
+//
+//	LeifDeclareCommand(PSTR("locate"), PSTR("flash the status LED so a human can find this board"));
+//
+//⛔ Both arguments must outlive the call -- a string literal, never a String's c_str(). Nothing
+//is copied: the vector holds the two pointers.
+//
+//The same list feeds a project's own `help`, through LeifDeclaredCommandsText -- which is the
+//point. A hand-written help string sits beside the if chain and rots there silently; one that
+//is rendered from the declarations cannot disagree with the page.
+//
+//-DNO_TOOLS_PAGE removes the page and, with it, everything declared for it.
+#ifndef NO_TOOLS_PAGE
+
+void LeifDeclareCommand(const char * pszCommand, const char * pszDescription);
+
+//The declared commands as text. bNamesOnly gives the one-line "HELP ? PERF LOCATE" shape an
+//existing console help already prints; otherwise one "name -- description" per line.
+//Empty when nothing has been declared, so a caller can fall back to whatever it printed before.
+void LeifDeclaredCommandsText(String & out, bool bNamesOnly);
+
+//⭐ The library puts a Tools link under the status table on every project's main page, because a
+//page nothing links to is exactly the invisibility this page exists to cure -- and the library
+//cannot reach a project's own nav row, which is built by a differently named function in each of
+//the 86 sketches. So: no project has to be edited for the page to be reachable.
+//A project that DOES carry its own Tools cell calls this before its first page render, and the
+//library's link goes away rather than appearing a second time somewhere else on the same page.
+void LeifToolsLinkHandledByProject();
+
+#else
+
+//⛔ A MACRO, not an empty inline function. An empty inline still leaves every declared literal
+//in the image: string literals are pooled into one .rodata section that --gc-sections cannot
+//split, so a board whose owner has already said it does not want the page would go on paying
+//for the page's text. A bulb has about 10 KB of app slot left; that is not a rounding error
+//there. The cost of the macro is that the arguments are never compiled, so a typo in a
+//declaration surfaces only in a build that keeps the page -- which every normal build does.
+#define LeifDeclareCommand(cmd,desc)	((void) 0)
+inline void LeifDeclaredCommandsText(String & out, bool bNamesOnly) { (void) bNamesOnly; out=""; }
+inline void LeifToolsLinkHandledByProject() {}
+
+#endif
+
 typedef std::function<void(void)> fn_LeifESPBaseOtaTooLargeCallback;
 void LeifSetOtaTooLargeCallback(fn_LeifESPBaseOtaTooLargeCallback cb);	//called when an OTA is refused because the image is larger than the inactive app slot. Refused by Update::begin() BEFORE any byte is written, so there is no partial image -- and it is the one moment the unit knows for certain its partition layout is too small for the firmware being pushed. Default none: the OTA fails exactly as it always did. A handler may repartition and restart, in which case it never returns.
 
