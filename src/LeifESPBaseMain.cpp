@@ -2349,7 +2349,13 @@ void LeifSetupBegin()
 
 		s.concat(PSTR("<!DOCTYPE html><meta name=\"viewport\" content=\"width=device-width, initial-scale=0.95\">"
 				"<html><head><style>table, th, td { border: 1px solid black; border-collapse: collapse;}"
-				"th, td { padding: 5px;}</style></head><body><h2>Tools - "));
+				//⛔ The command list is the one block on this page that cannot reflow by itself: a <pre>
+				//keeps its lines intact and a narrow screen simply cuts the right-hand end off, with no
+				//scrollbar and nothing to say it did. Measured at 390 px, where LOCATE's description
+				//lost its last four words. pre-wrap folds the long lines instead, and overflow-x catches
+				//anything that still cannot be broken.
+				"th, td { padding: 5px;} pre { white-space: pre-wrap; overflow-x: auto;}"
+				"</style></head><body><h2>Tools - "));
 		s.concat(GetHostName());
 		s.concat(PSTR("</h2><p><a href=\"/\">Back to the main page</a></p>"));
 
