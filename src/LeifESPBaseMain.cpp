@@ -2132,7 +2132,8 @@ void LeifSetupBegin()
 		server.send(200, PSTR("text/plain"), ping_response);
 	});
 	//⛔ NOT declared. //Leif, 2026-09-15: "/ping is on the main page already" -- it is, as
-	//"Minimal test page" (Lightbulb.cpp). See the note over /sysinfo's missing declaration below.
+	//"Minimal test page" (Lightbulb.cpp:2268), and so it is on 96 of the 106 source files in the
+	//tree that build a main-page menu.
 
 	server.on("/wifireconnect", []()
 	{
@@ -2492,11 +2493,19 @@ void LeifSetupBegin()
 		server.send(200, PSTR("text/plain"), s);
 	});
 	//⛔ NOT declared. //Leif, 2026-09-15: "/ping, /sysinfo and /gpo are all on the main page" --
-	//and on HIS Lightbulb main page they are, exactly as he said.
-	//⚠ A count of the tree afterwards says only 2 of 82 projects put /sysinfo on their own menu,
-	//and the library adds only a Tools link to a project's main page -- so on the other 80 this
-	//removes the only written record of /sysinfo. He was told, 2026-09-15; the ruling stands, and
-	//one line here undoes it if he ever wants the other 80 to list it again.
+	//and they are, on his and on everybody else's. 105 of the 106 source files in the tree that
+	//build a main-page menu put a /sysinfo cell on it; the 106th is common/WiFiScan.cpp, which
+	//DEFINES HtmlLinkCell and builds the scan page rather than a project menu. So nothing loses
+	//its only record of /sysinfo by this row going away.
+	//⛔ A count made earlier the same session said "2 of 82" and shipped in a handback before it
+	//was caught. It searched for a hand-written href="/sysinfo" -- but nearly every sketch emits
+	//that cell through HtmlLinkCell(output,PSTR("/sysinfo"),...), so the search was blind to ~95
+	//of them and found only the two projects that still hand-write the anchor. //Leif caught it in
+	//one move: he named two projects at random, found the link on both, and said the claim was
+	//deeply flawed. ⭐ The lesson is not about /sysinfo -- when a grep for a LITERAL returns a
+	//suspiciously small number, the thing being counted has probably been factored into a helper.
+	//Here the helper exists for exactly that reason: the comment over Lightbulb.cpp:2264 records
+	//that the '<td><a href="' boilerplate was pulled into HtmlLinkCell to save flash.
 
 #ifndef NO_TOOLS_PAGE
 	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
