@@ -259,6 +259,28 @@ void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb);	//appended to the e
 //point. A hand-written help string sits beside the if chain and rots there silently; one that
 //is rendered from the declarations cannot disagree with the page.
 //
+//The page lists ENDPOINTS the same way, and for the same reason: the library serves /tools but
+///upload, /dir, /coredump.bin and the rest are registered by the sketch and by common/, so the
+//library cannot know they exist. //Leif, 2026-09-15: "the tools page should probably list the
+///upload page too. Are there any other tools we missed?" -- there were seventeen.
+//
+//⭐ Declare an endpoint on the line where server.on() registers it, inside the same #ifdef.
+//That adjacency is the whole point: a list kept anywhere else drifts from the registrations the
+//first time somebody adds a page, silently, and a tools page that lies is worse than none.
+//
+//	server.on(PSTR("/upload"), HTTP_GET, handleUploadPage);
+//	LeifDeclareEndpoint(PSTR("/upload"), PSTR("put a file onto this board"));
+//
+//eLeifEndpoint_Acts is for a page that DOES something the moment it is opened -- restarts the
+//board, erases a file, repartitions the flash. Those are listed but deliberately NOT made into
+//links, because a tools page whose links can brick a light in one click is a trap, and a reader
+//who wants one can still type it.
+enum eLeifEndpoint
+{
+	eLeifEndpoint_Safe,		//opening it only SHOWS you something -- rendered as a link
+	eLeifEndpoint_Acts,		//opening it DOES something -- named, never a link
+};
+
 //-DNO_TOOLS_PAGE removes the page and, with it, everything declared for it.
 #ifndef NO_TOOLS_PAGE
 
@@ -277,6 +299,9 @@ void LeifDeclaredCommandsText(String & out, bool bNamesOnly);
 //library's link goes away rather than appearing a second time somewhere else on the same page.
 void LeifToolsLinkHandledByProject();
 
+void LeifDeclareEndpoint(const char * pszPath, const char * pszDescription,
+		eLeifEndpoint kind = eLeifEndpoint_Safe);
+
 #else
 
 //⛔ A MACRO, not an empty inline function. An empty inline still leaves every declared literal
@@ -286,6 +311,8 @@ void LeifToolsLinkHandledByProject();
 //there. The cost of the macro is that the arguments are never compiled, so a typo in a
 //declaration surfaces only in a build that keeps the page -- which every normal build does.
 #define LeifDeclareCommand(cmd,desc)	((void) 0)
+//Variadic because the third argument is optional at the call sites this replaces.
+#define LeifDeclareEndpoint(...)		((void) 0)
 inline void LeifDeclaredCommandsText(String & out, bool bNamesOnly) { (void) bNamesOnly; out=""; }
 inline void LeifToolsLinkHandledByProject() {}
 

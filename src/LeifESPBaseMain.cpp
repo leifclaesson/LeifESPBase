@@ -186,6 +186,27 @@ void LeifDeclareCommand(const char * pszCommand, const char * pszDescription)
 static bool g_bToolsLinkHandledByProject=false;
 void LeifToolsLinkHandledByProject() { g_bToolsLinkHandledByProject=true; }
 
+//Endpoints, declared where they are registered. Same storage rule as the commands above:
+//pointers to string literals, nothing copied, nothing freed.
+struct LeifDeclaredEndpoint
+{
+	const char * pszPath;
+	const char * pszDescription;
+	eLeifEndpoint kind;
+};
+static std::vector<LeifDeclaredEndpoint> g_vecDeclaredEndpoints;
+
+void LeifDeclareEndpoint(const char * pszPath, const char * pszDescription, eLeifEndpoint kind)
+{
+	if(!pszPath || !*pszPath) return;
+
+	LeifDeclaredEndpoint ep;
+	ep.pszPath=pszPath;
+	ep.pszDescription=pszDescription?pszDescription:"";
+	ep.kind=kind;
+	g_vecDeclaredEndpoints.push_back(ep);
+}
+
 void LeifDeclaredCommandsText(String & out, bool bNamesOnly)
 {
 	out="";
@@ -1995,12 +2016,15 @@ void LeifSetupBegin()
 		sprintf(ping_response, PSTR("pong from %s"), GetHostName());
 		server.send(200, PSTR("text/plain"), ping_response);
 	});
+	LeifDeclareEndpoint(PSTR("/ping"), PSTR("the smallest page this board can serve -- is it answering at all"));
 
 	server.on("/wifireconnect", []()
 	{
 		server.send(200, PSTR("text/plain"), PSTR("Reconnecting WiFi -- re-scanning for the strongest AP. Reload /wifiscan in ~20s to see the new BSSID."));
 		LeifScheduleForceReconnect(1000);	//defer the disconnect so this response reaches the client first
 	});
+	//Acts: it drops the association the moment you open it.
+	LeifDeclareEndpoint(PSTR("/wifireconnect"), PSTR("drop the WiFi association and re-scan for the strongest access point"), eLeifEndpoint_Acts);
 
 #if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
 	//Hand the firmware sitting in a flash slot back over HTTP, so a build that exists ONLY on a
@@ -2102,6 +2126,9 @@ void LeifSetupBegin()
 
 		csprintf(PSTR("/firmware.bin: sent %u of %u bytes from %s\n"), (unsigned) offset, (unsigned) part->size, part->label);
 	});
+	//Acts, for a reason the others do not share: opening it is a ~2 MB download during which the
+	//outputs are frozen. The slot table higher up the page is where you click to do it on purpose.
+	LeifDeclareEndpoint(PSTR("/firmware.bin"), PSTR("a whole flash slot, raw -- <tt>?slot=idle</tt> (the default), <tt>?slot=running</tt>, or <tt>?slot=&lt;label&gt;</tt> from /sysinfo"), eLeifEndpoint_Acts);
 #endif
 
 	server.on("/sysinfo", []()
@@ -2328,6 +2355,7 @@ void LeifSetupBegin()
 
 		server.send(200, PSTR("text/plain"), s);
 	});
+	LeifDeclareEndpoint(PSTR("/sysinfo"), PSTR("chip, flash, partition table, heap, uptime, WiFi -- what this board IS"));
 
 #ifndef NO_TOOLS_PAGE
 	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
@@ -2411,14 +2439,55 @@ void LeifSetupBegin()
 					"until the project writes one. It declares them with <tt>LeifDeclareCommand()</tt>.</p>"));
 		}
 
-		s.concat(PSTR("<h3>Endpoints</h3><table>"
-				"<tr><td><a href=\"/ping\">/ping</a></td><td>the smallest page this board can serve -- is it alive at all</td></tr>"
-				"<tr><td><a href=\"/sysinfo\">/sysinfo</a></td><td>chip, flash, partitions, heap, uptime, WiFi</td></tr>"
-				"<tr><td><a href=\"/wifireconnect\">/wifireconnect</a></td><td>drop the association and re-scan for the strongest AP</td></tr>"
-#if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
-				"<tr><td>/firmware.bin</td><td>a flash slot, raw -- <tt>?slot=idle</tt> (default), <tt>?slot=running</tt>, or <tt>?slot=&lt;label&gt;</tt> from /sysinfo</td></tr>"
-#endif
-				"</table></body></html>"));
+		s.concat(PSTR("<h3>Pages and endpoints</h3>"));
+
+		if(g_vecDeclaredEndpoints.size())
+		{
+			s.concat(PSTR("<p>Everything this firmware answers to that has been declared. A row "
+					"with no link is one that <b>does something</b> as soon as it is opened -- "
+					"restarts the board, erases a file, repartitions the flash. Type those "
+					"deliberately; a page whose links can take a light down in one click would be "
+					"a trap.</p><table>"));
+
+			size_t ep;
+			for(ep=0;ep<g_vecDeclaredEndpoints.size();ep++)
+			{
+				const LeifDeclaredEndpoint & e=g_vecDeclaredEndpoints[ep];
+
+				s.concat(PSTR("<tr><td>"));
+				if(e.kind==eLeifEndpoint_Safe)
+				{
+					s.concat(PSTR("<a href=\""));
+					s.concat(e.pszPath);
+					s.concat(PSTR("\">"));
+					s.concat(e.pszPath);
+					s.concat(PSTR("</a>"));
+				}
+				else
+				{
+					s.concat(e.pszPath);
+				}
+				s.concat(PSTR("</td><td>"));
+				s.concat(e.pszDescription);
+				s.concat(PSTR("</td></tr>"));
+
+				//The list is long on a full build and every row is a heap append. Same reason the
+				//rest of this file flushes: a page that renders is worth more than one that is
+				//tidy, and the caller's buffer is not the place to find that out.
+				if((ep & 7)==7) delay(0);
+			}
+
+			s.concat(PSTR("</table>"));
+		}
+		else
+		{
+			s.concat(PSTR("<p>None declared. They still work -- this is a list, not the thing "
+					"itself -- but nothing here can enumerate the pages a sketch registers, so "
+					"each one has to say so with <tt>LeifDeclareEndpoint()</tt> beside its own "
+					"<tt>server.on()</tt>.</p>"));
+		}
+
+		s.concat(PSTR("</body></html>"));
 
 		server.send(200, PSTR("text/html"), s);
 	});
