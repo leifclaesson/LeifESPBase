@@ -1759,6 +1759,121 @@ static String PhyProtocolString()
 #endif
 }
 
+#if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
+//How many of a slot's bytes are actually firmware.
+//
+//Leif, 2026-09-15: "the firmware readback shows the full size of the flash, umm, or rather the
+//full size of the partition. Do we not know the sketch size from there?"
+//
+//We do, and this board has been reporting it all along -- for one slot. An ESP32 image carries
+//its own length in its segment table, and /sysinfo's Sketch line comes from ESP.getSketchSize(),
+//which walks that table. It only ever walks the RUNNING partition, which is the one slot whose
+//contents were never in doubt. This is the same walk aimed at any partition, so the idle slot
+//can say what it holds too.
+//
+//NOT a backwards scan for the first non-0xFF byte, which is the obvious shortcut and is
+//measurably wrong. Measured on 172.22.28.181, 2026-09-15: past the 942,496-byte image in app1
+//sat 224,769 non-0xFF bytes -- the remains of the LARGER image that had occupied that slot
+//before it. An erased slot reads 0xFF; a slot written over by something smaller does not, and
+//the scan would have reported nearly three times the truth.
+//
+//NOT esp_image_verify() either, which is what ESP.getSketchSize() ends up calling and which
+//would have been fifteen lines: it takes an esp_partition_pos_t, so it would aim anywhere
+//happily. But it does not stop at the header -- it reads the whole image and SHA256s it, which
+//is upwards of a megabyte and a half-second per slot on a board whose outputs freeze for as
+//long as a page takes to render. /tools would go from instant to a visible hitch on a dimmer to
+//buy a verification nothing here needs. The walk below reads about a hundred bytes, and its
+//answer is checked against ESP.getSketchSize() on the running slot, where both can be asked the
+//same question.
+//
+//The header is read as raw bytes at fixed offsets rather than through esp_image_header_t. The
+//middle of that struct has been re-carved repeatedly across IDF versions -- reserved bytes
+//becoming chip_id, min_chip_rev, then min_chip_rev_full and max_chip_rev_full -- while the three
+//fields wanted here have never moved and the total has been a _Static_assert'd 24 bytes
+//throughout. Bytes are one code path for core 1.0.6 and core 3.3.10; the struct is two.
+//
+//Returns 0 for anything it does not recognise: an erased slot, something that is not an ESP32
+//image, a segment table that does not fit inside the partition. The caller then says so rather
+//than printing a number it cannot stand behind. Nothing depends on this being right --
+///firmware.bin still serves the whole partition, padding and all, precisely so that a bug in
+//here cannot truncate what may be the last surviving copy of a firmware.
+static uint32_t LeifImageLengthInSlot(const esp_partition_t * part)
+{
+	if(!part)
+	{
+		return 0;
+	}
+
+	uint8_t hdr[24];	//_Static_assert(sizeof(esp_image_header_t) == 24), in every core so far
+	if(esp_partition_read(part, 0, hdr, sizeof(hdr))!=ESP_OK)
+	{
+		return 0;
+	}
+
+	if(hdr[0]!=0xE9)	//ESP_IMAGE_HEADER_MAGIC
+	{
+		return 0;
+	}
+
+	uint8_t segments=hdr[1];
+	bool bHashAppended=(hdr[23]!=0);	//a 32-byte SHA256 follows the checksum, and counts as image
+
+	//ESP_IMAGE_MAX_SEGMENTS is the bootloader's own ceiling. A count past it means these bytes
+	//merely happen to start with 0xE9.
+	if(segments<1 || segments>16)
+	{
+		return 0;
+	}
+
+	uint32_t pos=sizeof(hdr);
+
+	uint8_t seg;
+	for(seg=0;seg<segments;seg++)
+	{
+		uint8_t seghdr[8];	//esp_image_segment_header_t: uint32 load_addr, then uint32 data_len
+
+		if(pos+sizeof(seghdr)>part->size)
+		{
+			return 0;
+		}
+
+		if(esp_partition_read(part, pos, seghdr, sizeof(seghdr))!=ESP_OK)
+		{
+			return 0;
+		}
+
+		uint32_t len=(uint32_t)seghdr[4] | ((uint32_t)seghdr[5]<<8) | ((uint32_t)seghdr[6]<<16) | ((uint32_t)seghdr[7]<<24);
+
+		pos+=sizeof(seghdr);
+
+		//Tested against the partition BEFORE it is added, so a corrupt segment length cannot
+		//wrap pos past its own bounds check.
+		if(len>part->size || pos+len>part->size)
+		{
+			return 0;
+		}
+
+		pos+=len;
+	}
+
+	//One checksum byte follows the last segment, placed so that everything up to and including
+	//it is a multiple of 16.
+	pos=(pos+1+15) & ~((uint32_t)15);
+
+	if(bHashAppended)
+	{
+		pos+=32;	//ESP_IMAGE_HASH_LEN
+	}
+
+	if(pos>part->size)
+	{
+		return 0;
+	}
+
+	return pos;
+}
+#endif
+
 void LeifSetupBegin()
 {
 	while(IsLeifSetupBeginDone())
@@ -2096,6 +2211,21 @@ void LeifSetupBegin()
 		char disp[160];
 		sprintf(disp, PSTR("attachment; filename=\"%s-%s.bin\""), GetHostName(), part->label);
 		server.sendHeader(PSTR("Content-Disposition"), disp);
+
+		//How far into this file the firmware actually goes, for a script that wants to trim it.
+		//⛔ The BODY does not change: Content-Length is still the whole partition and every byte
+		//of it is sent. That is the whole point -- a bug in the walk makes this header wrong,
+		//where trimming on the board would make the FILE wrong, and the file may be the only copy
+		//of that firmware left anywhere. Omitted rather than sent as 0 when the walk finds nothing
+		//it recognises, so a reader never has to decide what a zero means.
+		uint32_t uImageLen=LeifImageLengthInSlot(part);
+		if(uImageLen)
+		{
+			char imglen[24];
+			sprintf(imglen, PSTR("%u"), (unsigned) uImageLen);
+			server.sendHeader(PSTR("X-Image-Length"), imglen);
+		}
+
 		server.setContentLength(part->size);
 		server.send(200, PSTR("application/octet-stream"), "");
 
@@ -2393,7 +2523,15 @@ void LeifSetupBegin()
 				"was running before the last successful push is still sitting in the idle slot. "
 				"<b>One push buys one recovery</b> -- the push after this one lands on top of it. "
 				"The outputs freeze for the few seconds a slot takes to download.</p>"
-				"<table><tr><th>Slot</th><th>Partition</th><th>Size</th><th></th></tr>"));
+				//The download is the whole partition, padding and all -- Image is what is worth
+				//keeping out of it, and the difference between the two columns is what a trim on
+				//the PC would throw away. Said in the caption rather than left for someone to
+				//discover when the file on disk is bigger than the number on this page.
+				"<p>A download is the <b>whole partition</b>, the image plus whatever padding or "
+				"older firmware is left in the rest of it. <b>Image</b> is how far into that file "
+				"the firmware actually goes; the same value rides on the download as the "
+				"<tt>X-Image-Length</tt> header, so a script can trim it without guessing.</p>"
+				"<table><tr><th>Slot</th><th>Partition</th><th>Image</th><th></th></tr>"));
 
 		//Named by what they ARE to the reader, not by label: which of app0/app1 is idle changes
 		//with every push, and the label alone is the one thing that cannot be acted on.
@@ -2407,11 +2545,28 @@ void LeifSetupBegin()
 		{
 			if(!parts[slot]) continue;
 
-			char temp[256];
-			sprintf(temp, PSTR("<tr><td>%s</td><td>%s</td><td>%u bytes (%u KB)</td>"
+			//Told apart because they mean different things to whoever is looking: an idle slot on
+			//a board that has only ever been flashed once is EMPTY, which is normal and is not the
+			//same news as a slot holding something the walk could not make sense of.
+			char szImage[64];
+			uint32_t uImageLen=LeifImageLengthInSlot(parts[slot]);
+			if(uImageLen)
+			{
+				sprintf(szImage, PSTR("%u bytes (%u KB)"), (unsigned) uImageLen, (unsigned) (uImageLen/1024));
+			}
+			else
+			{
+				uint8_t first=0xFF;
+				bool bErased=(esp_partition_read(parts[slot], 0, &first, 1)==ESP_OK && first==0xFF);
+				strcpy(szImage, bErased ? PSTR("empty - never written") : PSTR("not a recognisable image"));
+			}
+
+			char temp[320];
+			sprintf(temp, PSTR("<tr><td>%s</td><td>%s, %u bytes (%u KB)</td><td>%s</td>"
 					"<td><a href=\"/firmware.bin?slot=%s\">download</a></td></tr>"),
 					pszWhat[slot], parts[slot]->label,
 					(unsigned) parts[slot]->size, (unsigned) (parts[slot]->size/1024),
+					szImage,
 					slot?"running":"idle");
 			s.concat(temp);
 		}
