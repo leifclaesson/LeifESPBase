@@ -2131,7 +2131,7 @@ void LeifSetupBegin()
 		sprintf(ping_response, PSTR("pong from %s"), GetHostName());
 		server.send(200, PSTR("text/plain"), ping_response);
 	});
-	LeifDeclareEndpoint(PSTR("/ping"), PSTR("the smallest page this board can serve -- is it answering at all"));
+	LeifDeclareEndpoint(PSTR("/ping"), PSTR("is it answering at all"));
 
 	server.on("/wifireconnect", []()
 	{
@@ -2139,7 +2139,7 @@ void LeifSetupBegin()
 		LeifScheduleForceReconnect(1000);	//defer the disconnect so this response reaches the client first
 	});
 	//Acts: it drops the association the moment you open it.
-	LeifDeclareEndpoint(PSTR("/wifireconnect"), PSTR("drop the WiFi association and re-scan for the strongest access point"), eLeifEndpoint_Acts);
+	LeifDeclareEndpoint(PSTR("/wifireconnect"), PSTR("drop the association and re-pick the strongest access point"), eLeifEndpoint_Acts);
 
 #if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
 	//Hand the firmware sitting in a flash slot back over HTTP, so a build that exists ONLY on a
@@ -2194,7 +2194,7 @@ void LeifSetupBegin()
 
 		if(!part)
 		{
-			server.send(404, PSTR("text/plain"), PSTR("no such app partition -- use slot=idle, slot=running, or a label from the table on /sysinfo\n"));
+			server.send(404, PSTR("text/plain"), PSTR("no such slot -- use idle, running, or a label from /sysinfo\n"));
 			return;
 		}
 
@@ -2204,7 +2204,7 @@ void LeifSetupBegin()
 		uint8_t * buf = (uint8_t *) malloc(chunk);
 		if(!buf)
 		{
-			server.send(503, PSTR("text/plain"), PSTR("no memory for the read buffer -- retry when the board is quieter\n"));
+			server.send(503, PSTR("text/plain"), PSTR("no memory for the read buffer -- retry when quieter\n"));
 			return;
 		}
 
@@ -2241,7 +2241,7 @@ void LeifSetupBegin()
 				//arrive, so the client sees a broken download -- which is what we want: a short
 				//file announces itself, a file with a silent hole in it does not, and this may be
 				//the only copy of that firmware in existence.
-				csprintf(PSTR("/firmware.bin: read failed at 0x%06X of %s -- cutting the transfer short\n"), (unsigned) offset, part->label);
+				csprintf(PSTR("/firmware.bin: read failed at 0x%06X of %s, cut short\n"), (unsigned) offset, part->label);
 				break;
 			}
 
@@ -2258,7 +2258,7 @@ void LeifSetupBegin()
 	});
 	//Acts, for a reason the others do not share: opening it is a ~2 MB download during which the
 	//outputs are frozen. The slot table higher up the page is where you click to do it on purpose.
-	LeifDeclareEndpoint(PSTR("/firmware.bin"), PSTR("a whole flash slot, raw -- <tt>?slot=idle</tt> (the default), <tt>?slot=running</tt>, or <tt>?slot=&lt;label&gt;</tt> from /sysinfo"), eLeifEndpoint_Acts);
+	LeifDeclareEndpoint(PSTR("/firmware.bin"), PSTR("a whole flash slot, raw -- <tt>?slot=</tt> <tt>idle</tt> (the default), <tt>running</tt>, or a label from /sysinfo"), eLeifEndpoint_Acts);
 #endif
 
 	server.on("/sysinfo", []()
@@ -2485,7 +2485,7 @@ void LeifSetupBegin()
 
 		server.send(200, PSTR("text/plain"), s);
 	});
-	LeifDeclareEndpoint(PSTR("/sysinfo"), PSTR("chip, flash, partition table, heap, uptime, WiFi -- what this board IS"));
+	LeifDeclareEndpoint(PSTR("/sysinfo"), PSTR("chip, flash, partitions, heap, uptime, WiFi"));
 
 #ifndef NO_TOOLS_PAGE
 	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
@@ -2518,19 +2518,16 @@ void LeifSetupBegin()
 		s.concat(PSTR("</h2><p><a href=\"/\">Back to the main page</a></p>"));
 
 #if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
+		//⛔ Only the facts that change what a reader DOES: the recovery is one-shot, and the file
+		//is bigger than the image inside it. //Leif, 2026-09-15: "I don't want to bloat the
+		//firmware with lots and lots of text that I'm not going to read." What was cut from here
+		//was explaining the OTA mechanism to the man who built it; the long version lives in
+		//misc\docs\plans\esp-firmware-readback-plan.md, which costs the board nothing.
 		s.concat(PSTR("<h3>Firmware readback</h3>"
-				"<p>An update never writes into the slot it is running from, so the firmware this board "
-				"was running before the last successful push is still sitting in the idle slot. "
-				"<b>One push buys one recovery</b> -- the push after this one lands on top of it. "
-				"The outputs freeze for the few seconds a slot takes to download.</p>"
-				//The download is the whole partition, padding and all -- Image is what is worth
-				//keeping out of it, and the difference between the two columns is what a trim on
-				//the PC would throw away. Said in the caption rather than left for someone to
-				//discover when the file on disk is bigger than the number on this page.
-				"<p>A download is the <b>whole partition</b>, the image plus whatever padding or "
-				"older firmware is left in the rest of it. <b>Image</b> is how far into that file "
-				"the firmware actually goes; the same value rides on the download as the "
-				"<tt>X-Image-Length</tt> header, so a script can trim it without guessing.</p>"
+				"<p>An update fills the <b>other</b> slot, so the firmware from before the last push "
+				"is still in the idle one -- <b>one push buys one recovery</b>. Outputs freeze while "
+				"a slot downloads, and a download is the whole partition; <b>Image</b> is how far "
+				"into it the firmware goes, also sent as <tt>X-Image-Length</tt>.</p>"
 				"<table><tr><th>Slot</th><th>Partition</th><th>Image</th><th></th></tr>"));
 
 		//Named by what they ARE to the reader, not by label: which of app0/app1 is idle changes
@@ -2581,7 +2578,7 @@ void LeifSetupBegin()
 
 		if(strCommands.length())
 		{
-			s.concat(PSTR("<p>Type these on the telnet console (port 23) or the serial console.</p><pre>"));
+			s.concat(PSTR("<p>Telnet port 23, or the serial console.</p><pre>"));
 			//Emitted as-is: a declaration is a string literal written by whoever wrote the command,
 			//so the declarer owns its markup and its escaping, exactly as LeifRegisterGetApRxText does.
 			s.concat(strCommands);
@@ -2589,20 +2586,18 @@ void LeifSetupBegin()
 		}
 		else
 		{
-			s.concat(PSTR("<p>This project has not declared any. The console still works -- every project "
-					"registers one callback that receives whatever was typed, so there is no list to show "
-					"until the project writes one. It declares them with <tt>LeifDeclareCommand()</tt>.</p>"));
+			//⛔ A branch Leif's own builds never render -- every one of his projects declares
+			//something -- so its text is pure weight on every board that ships. It says the one
+			//thing a reader who DOES see it needs: the name of the macro that fills it in.
+			s.concat(PSTR("<p>None declared -- <tt>LeifDeclareCommand()</tt> does it.</p>"));
 		}
 
 		s.concat(PSTR("<h3>Pages and endpoints</h3>"));
 
 		if(g_vecDeclaredEndpoints.size())
 		{
-			s.concat(PSTR("<p>Everything this firmware answers to that has been declared. A row "
-					"with no link is one that <b>does something</b> as soon as it is opened -- "
-					"restarts the board, erases a file, repartitions the flash. Type those "
-					"deliberately; a page whose links can take a light down in one click would be "
-					"a trap.</p><table>"));
+			s.concat(PSTR("<p>A row with no link <b>does something</b> the moment it is opened -- "
+					"type those deliberately.</p><table>"));
 
 			size_t ep;
 			for(ep=0;ep<g_vecDeclaredEndpoints.size();ep++)
@@ -2636,10 +2631,9 @@ void LeifSetupBegin()
 		}
 		else
 		{
-			s.concat(PSTR("<p>None declared. They still work -- this is a list, not the thing "
-					"itself -- but nothing here can enumerate the pages a sketch registers, so "
-					"each one has to say so with <tt>LeifDeclareEndpoint()</tt> beside its own "
-					"<tt>server.on()</tt>.</p>"));
+			//Same as the command branch above: never rendered on a real build, so it says only the
+			//macro name. The reason the list has to be declared at all is in the library's header.
+			s.concat(PSTR("<p>None declared -- <tt>LeifDeclareEndpoint()</tt> does it.</p>"));
 		}
 
 		s.concat(PSTR("</body></html>"));
