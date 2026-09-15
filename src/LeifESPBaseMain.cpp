@@ -2131,7 +2131,8 @@ void LeifSetupBegin()
 		sprintf(ping_response, PSTR("pong from %s"), GetHostName());
 		server.send(200, PSTR("text/plain"), ping_response);
 	});
-	LeifDeclareEndpoint(PSTR("/ping"), PSTR("is it answering at all"));
+	//⛔ NOT declared. //Leif, 2026-09-15: "/ping is on the main page already" -- it is, as
+	//"Minimal test page" (Lightbulb.cpp). See the note over /sysinfo's missing declaration below.
 
 	server.on("/wifireconnect", []()
 	{
@@ -2139,7 +2140,10 @@ void LeifSetupBegin()
 		LeifScheduleForceReconnect(1000);	//defer the disconnect so this response reaches the client first
 	});
 	//Acts: it drops the association the moment you open it.
-	LeifDeclareEndpoint(PSTR("/wifireconnect"), PSTR("drop the association and re-pick the strongest access point"), eLeifEndpoint_Acts);
+	//⭐ NULL, not a description. //Leif, 2026-09-15: this row and /restart, /delete, /upload are
+	//"self-explanatory from the name" -- the reader gets the name, the image pays nothing.
+	//NULL rather than PSTR(""): LeifDeclareEndpoint substitutes "" and no literal is emitted.
+	LeifDeclareEndpoint(PSTR("/wifireconnect"), NULL, eLeifEndpoint_Acts);
 
 #if defined(ARDUINO_ARCH_ESP32) && !defined(NO_FIRMWARE_READBACK)
 	//Hand the firmware sitting in a flash slot back over HTTP, so a build that exists ONLY on a
@@ -2256,9 +2260,11 @@ void LeifSetupBegin()
 
 		csprintf(PSTR("/firmware.bin: sent %u of %u bytes from %s\n"), (unsigned) offset, (unsigned) part->size, part->label);
 	});
-	//Acts, for a reason the others do not share: opening it is a ~2 MB download during which the
-	//outputs are frozen. The slot table higher up the page is where you click to do it on purpose.
-	LeifDeclareEndpoint(PSTR("/firmware.bin"), PSTR("a whole flash slot, raw -- <tt>?slot=</tt> <tt>idle</tt> (the default), <tt>running</tt>, or a label from /sysinfo"), eLeifEndpoint_Acts);
+	//⛔ NOT declared. //Leif, 2026-09-15: "the download buttons are right on that page further
+	//up." Safe fleet-wide because the slot table that carries those buttons shares this exact
+	//guard -- no board can have the endpoint and not the buttons, so the row would say only what
+	//the table above it already offers. ?slot= takes idle (the default), running, or a partition
+	//label -- documented in the handler comment above rather than in every board's flash.
 #endif
 
 	server.on("/sysinfo", []()
@@ -2485,7 +2491,12 @@ void LeifSetupBegin()
 
 		server.send(200, PSTR("text/plain"), s);
 	});
-	LeifDeclareEndpoint(PSTR("/sysinfo"), PSTR("chip, flash, partitions, heap, uptime, WiFi"));
+	//⛔ NOT declared. //Leif, 2026-09-15: "/ping, /sysinfo and /gpo are all on the main page" --
+	//and on HIS Lightbulb main page they are, exactly as he said.
+	//⚠ A count of the tree afterwards says only 2 of 82 projects put /sysinfo on their own menu,
+	//and the library adds only a Tools link to a project's main page -- so on the other 80 this
+	//removes the only written record of /sysinfo. He was told, 2026-09-15; the ruling stands, and
+	//one line here undoes it if he ever wants the other 80 to list it again.
 
 #ifndef NO_TOOLS_PAGE
 	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
