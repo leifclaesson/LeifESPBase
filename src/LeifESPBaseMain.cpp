@@ -2493,19 +2493,20 @@ void LeifSetupBegin()
 		server.send(200, PSTR("text/plain"), s);
 	});
 	//⛔ NOT declared. //Leif, 2026-09-15: "/ping, /sysinfo and /gpo are all on the main page" --
-	//and they are, on his and on everybody else's. 105 of the 106 source files in the tree that
-	//build a main-page menu put a /sysinfo cell on it; the 106th is common/WiFiScan.cpp, which
-	//DEFINES HtmlLinkCell and builds the scan page rather than a project menu. So nothing loses
-	//its only record of /sysinfo by this row going away.
-	//⛔ A count made earlier the same session said "2 of 82" and shipped in a handback before it
-	//was caught. It searched for a hand-written href="/sysinfo" -- but nearly every sketch emits
-	//that cell through HtmlLinkCell(output,PSTR("/sysinfo"),...), so the search was blind to ~95
-	//of them and found only the two projects that still hand-write the anchor. //Leif caught it in
-	//one move: he named two projects at random, found the link on both, and said the claim was
-	//deeply flawed. ⭐ The lesson is not about /sysinfo -- when a grep for a LITERAL returns a
-	//suspiciously small number, the thing being counted has probably been factored into a helper.
-	//Here the helper exists for exactly that reason: the comment over Lightbulb.cpp:2264 records
-	//that the '<td><a href="' boilerplate was pulled into HtmlLinkCell to save flash.
+	//and they are, on his and on everybody else's: 80 of the 82 sketch projects in this tree put
+	//a /sysinfo cell on their own menu. (The two that do not are TestProject1 and WorkshopMCU, a
+	//scratch project and a superseded one.) Nothing loses its only record of /sysinfo by this row
+	//going away.
+	//⛔ A count made earlier the same session said "2 of 82" -- almost exactly INVERTED -- and it
+	//reached a handback before Leif caught it. Its pattern was 'HtmlLinkCell(output,PSTR("/sysinfo")
+	//\|"/sysinfo"'. Both alternatives END IN A QUOTE, and in the source the link lives inside an
+	//HTML string literal where C++ escapes both quotes: href=\"/sysinfo\". The closing " the
+	//pattern demanded is a backslash in the file, so it matched only the two places where
+	///sysinfo appears as a bare C string. ⭐ The rule, and it is not about /sysinfo: when grepping
+	//SOURCE for a URL or an attribute, the quotes around it are escaped -- anchor on the path, not
+	//on its delimiters. ⚠ And the give-away was there to be read: a suspiciously SMALL count is
+	//the same failure as an empty one, minus the instinct to distrust it. Leif caught it by naming
+	//two projects at random -- not the two the count had found -- and finding the link on both.
 
 #ifndef NO_TOOLS_PAGE
 	//Leif, 2026-09-14: "a new utilities page or /utils or something that can be reachable from
