@@ -2922,6 +2922,11 @@ void LeifScheduleRestart(uint32_t ms)
 
 static uint32_t ulReconnectTimestamp=0;
 
+//⚠ NO CALLERS anywhere in the tree as of 2026-09-15. Its last one was RelayControl's own
+///reconnect endpoint, deleted that day as a duplicate of /wifireconnect. Kept because this is
+//exported library API and removing it is a separate decision from deleting an endpoint -- but
+//note that it lands on the same WiFi.disconnect(false) as LeifScheduleForceReconnect() below,
+//minus that one's log line, so a new caller almost certainly wants the Force version instead.
 void LeifScheduleReconnect(uint32_t ms)
 {
 	ulReconnectTimestamp=millis()+ms;
