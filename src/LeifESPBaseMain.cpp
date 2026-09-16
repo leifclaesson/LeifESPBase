@@ -166,6 +166,22 @@ void LeifAddSysinfoSection(fn_LeifESPBaseSysinfoSection cb)
 //Console commands a project has declared, in the order it declared them -- the order a help
 //line should read in, which is a judgement only the project can make, so it is kept and never
 //sorted. Pointers only: every argument is a string literal that outlives the board.
+//
+//⛔ THOSE LITERALS LIVE IN FLASH, so NOTHING here may dereference one with a plain `*p`.
+//Every caller writes PSTR("..."), which on ESP8266 puts the bytes in .irom0.text, and the
+//flash cache serves 32-bit reads ONLY -- an `l8ui` against it raises EXCCAUSE 3
+//(LoadStoreError) and the board resets before the postmortem can finish. The core's
+//non32xfer handler does NOT cover this: core_esp8266_non32xfer.cpp:99 fixes up IRAM and
+//ICACHE addresses, and irom is neither. Measured 2026-09-17 on the soak bench --
+//Lightbulb 4.48 crash-looped at 5/s, ~100 ms into setup(), from exactly this at the
+//LeifDeclareEndpoint() guard below: Exception (3) epc1=0x40211d55 excvaddr=0x4024fc0c.
+//⭐ pgm_read_byte() is the read that is correct BOTH ways -- it is an aligned 32-bit load
+//plus a shift, so it is equally right for the "" fallbacks, which are in DRAM, and on
+//ESP32, where PSTR is a no-op and this bug cannot appear at all. That asymmetry is why it
+//shipped: the same code is harmless on every ESP32 in the tree.
+//⚠ The String::concat() calls further down are NOT this bug -- xtensa strlen/memcpy read
+//flash 32 bits at a time, which is why the rest of this file has always passed PSTR()
+//straight to concat(). Only a hand-written single-byte dereference faults.
 struct LeifDeclaredCommand
 {
 	const char * pszCommand;
@@ -175,7 +191,7 @@ static std::vector<LeifDeclaredCommand> g_vecDeclaredCommands;
 
 void LeifDeclareCommand(const char * pszCommand, const char * pszDescription)
 {
-	if(!pszCommand || !*pszCommand) return;
+	if(!pszCommand || !pgm_read_byte(pszCommand)) return;		//flash pointer -- see above
 
 	LeifDeclaredCommand cmd;
 	cmd.pszCommand=pszCommand;
@@ -198,7 +214,7 @@ static std::vector<LeifDeclaredEndpoint> g_vecDeclaredEndpoints;
 
 void LeifDeclareEndpoint(const char * pszPath, const char * pszDescription, eLeifEndpoint kind)
 {
-	if(!pszPath || !*pszPath) return;
+	if(!pszPath || !pgm_read_byte(pszPath)) return;			//flash pointer -- see above
 
 	LeifDeclaredEndpoint ep;
 	ep.pszPath=pszPath;
@@ -224,7 +240,7 @@ void LeifDeclaredCommandsText(String & out, bool bNamesOnly)
 		else
 		{
 			out.concat(cmd.pszCommand);
-			if(*cmd.pszDescription)
+			if(pgm_read_byte(cmd.pszDescription))		//flash pointer -- see above
 			{
 				out.concat(PSTR(" -- "));
 				out.concat(cmd.pszDescription);
