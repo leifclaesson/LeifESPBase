@@ -297,6 +297,12 @@ void LeifDeclaredCommandsText(String & out, bool bNamesOnly);
 //the 86 sketches. So: no project has to be edited for the page to be reachable.
 //A project that DOES carry its own Tools cell calls this before its first page render, and the
 //library's link goes away rather than appearing a second time somewhere else on the same page.
+//
+//⛔ That fallback is a SAFETY NET for a project nobody has got to yet -- it is not the finished
+//look, and it should not be left in place on a project you are already editing. Loose between the
+//status table and the nav row is exactly where //Leif, 2026-09-17 said it "is not part of the
+//table. It sits before it and looks terrible." Every sketch in the arduino tree now carries its
+//own cell and calls this, so a NEW project should do the same rather than inherit the net.
 void LeifToolsLinkHandledByProject();
 
 void LeifDeclareEndpoint(const char * pszPath, const char * pszDescription,
