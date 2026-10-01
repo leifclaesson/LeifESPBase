@@ -2141,6 +2141,18 @@ void LeifSetupBegin()
 	telnet.setNoDelay(true);
 	csprintf(PSTR("Telnet server started\n"));
 
+	//⛔ Before the first server.on(): every registration below it comes out of
+	//LeifWebServer::on() wrapped in the authentication gate, and the gate has to know whether
+	//a password exists yet. The setup page goes up here too, so a first-boot device has
+	//somewhere to send every other request.
+	LeifWebAuthBegin();
+	LeifWebAuthRegisterSetupPage();
+
+	if(!LeifWebAuthIsConfigured())
+	{
+		csprintf(PSTR("No web password set -- every page answers with /setpassword until one is\n"));
+	}
+
 	server.on("/ping", []()
 	{
 		char ping_response[128];

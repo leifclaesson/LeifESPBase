@@ -28,11 +28,61 @@ class LeifWebServer : public WebServer
 public:
 	using WebServer::WebServer;	//inherit the (port) and (addr,port) ctors -- no call-site changes
 
+	//---- the authentication gate ------------------------------------------------------------
+	//These SHADOW the base class's on() rather than override it -- WebServer::on() is not
+	//virtual. That is deliberate, and it is what makes the gate impossible to forget: `server`
+	//is declared as this concrete type in LeifESPBase.h, so every server.on() in this library
+	//and in every project binds to these and comes out wrapped. There is no second way to
+	//register a handler, so no call site can publish an unauthenticated endpoint by omission.
+	//
+	//⛔ Not a style preference. /firmware.bin served the whole running image -- OTA password
+	//included, recoverable with `strings` -- to anyone who could reach port 80, for exactly as
+	//long as protecting an endpoint was something a call site had to remember to do.
+	//
+	//A page that genuinely must answer with no credential registers through the base class
+	//explicitly (server.WebServer::on(...)) and declares itself with LeifWebAuthDeclarePublic.
+	//Only the first-boot setup page does that.
+	RequestHandler & on(const Uri &uri, THandlerFunction fn)
+	{
+		return WebServer::on(uri,Gated(fn));
+	}
+
+	RequestHandler & on(const Uri &uri, HTTPMethod method, THandlerFunction fn)
+	{
+		return WebServer::on(uri,method,Gated(fn));
+	}
+
+	//Both handlers are gated. The upload handler runs while the body is still arriving, i.e.
+	//BEFORE the main handler, so leaving it open would let an unauthenticated client stream a
+	//file into whatever the project does with one.
+	RequestHandler & on(const Uri &uri, HTTPMethod method, THandlerFunction fn, THandlerFunction ufn)
+	{
+		return WebServer::on(uri,method,Gated(fn),Gated(ufn));
+	}
+
+	void onNotFound(THandlerFunction fn)
+	{
+		WebServer::onNotFound(Gated(fn));
+	}
+
+	void onFileUpload(THandlerFunction fn)
+	{
+		WebServer::onFileUpload(Gated(fn));
+	}
+
+	//Verifies an RFC 2617 digest response against a stored H1 (MD5 of user:realm:password).
+	//A member because it needs the base class's protected request state and parameter parser.
+	//Implemented in LeifWebAuth.cpp.
+	bool LeifCheckDigestAuth(const String & strUser, const String & strRealm, const String & strH1);
+
 protected:
 	size_t _currentClientWrite(const char *b, size_t l) override;
 	size_t _currentClientWrite_P(PGM_P b, size_t l) override;
 
 private:
 	size_t BoundedClientWrite(const char *b, size_t l, bool progmem);
+
+	//Defined in LeifWebAuth.cpp, so this widely-included header pulls in no auth module.
+	static THandlerFunction Gated(THandlerFunction fn);
 };
 #endif
