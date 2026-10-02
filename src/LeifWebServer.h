@@ -73,7 +73,16 @@ public:
 	//Verifies an RFC 2617 digest response against a stored H1 (MD5 of user:realm:password).
 	//A member because it needs the base class's protected request state and parameter parser.
 	//Implemented in LeifWebAuth.cpp.
-	bool LeifCheckDigestAuth(const String & strUser, const String & strRealm, const String & strH1);
+	//
+	//bStale comes back true only when the response hashed correctly and the challenge it
+	//answered is the part that was wrong -- expired, evicted, or already used with that counter.
+	//That is the one case a browser may retry silently, so it decides what the challenge below
+	//says.
+	bool LeifCheckDigestAuth(const String & strUser, const String & strRealm, const String & strH1, bool & bStale);
+
+	//Issues a fresh digest challenge and remembers it alongside the last few, rather than
+	//replacing them the way WebServer::requestAuthentication() does.
+	void LeifSendDigestChallenge(const String & strRealm, bool bStale);
 
 protected:
 	size_t _currentClientWrite(const char *b, size_t l) override;

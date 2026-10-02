@@ -37,6 +37,21 @@
 #define LEIF_WEBAUTH_MIN_PASSWORD_LEN 8
 #endif
 
+//How many outstanding challenges the device remembers at once. A browser opening a page fires
+//the document and every asset together, none of them carrying a credential yet, so it collects
+//one challenge per connection before it can answer any of them -- and a device that remembers
+//only the newest refuses every answer but one. 8 covers the 6 connections per host that both
+//Chrome and Firefox open, with two spare.
+#ifndef LEIF_WEBAUTH_CHALLENGE_SLOTS
+#define LEIF_WEBAUTH_CHALLENGE_SLOTS 8
+#endif
+
+//How long a challenge stays answerable. A browser meeting the stale=true refusal that follows
+//retries by itself, so expiry costs a round trip rather than a password prompt.
+#ifndef LEIF_WEBAUTH_CHALLENGE_LIFETIME_MS
+#define LEIF_WEBAUTH_CHALLENGE_LIFETIME_MS 300000
+#endif
+
 //Call once from LeifSetupBegin(), before any handler can run.
 void LeifWebAuthBegin();
 

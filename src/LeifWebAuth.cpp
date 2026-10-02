@@ -462,6 +462,110 @@ void LeifWebAuthRegisterSetupPage()
 }
 
 //---------------------------------------------------------------------------------------------
+//The outstanding challenges
+//---------------------------------------------------------------------------------------------
+//WebServer::requestAuthentication() keeps ONE nonce/opaque pair and discards the previous one,
+//so a browser that was issued several challenges at once can only answer the last of them. On
+//the bench that let 1 request in 6 through and the browser asked for the password again. The
+//ring below is the whole fix: every challenge stays answerable until it expires or ages out.
+//
+//Fixed arrays rather than String, so the ring costs no heap and cannot fragment it. Only the
+//web task touches this, so no locking.
+struct sChallenge
+{
+	char szNonce[33];
+	char szOpaque[33];
+	uint32_t uIssuedMs;
+	uint32_t uNcHigh;	//highest request counter seen against this challenge, 0 until the first
+	uint32_t uNcSeen;	//bit n marks (uNcHigh - n) as used, so bit 0 is uNcHigh itself
+	bool bValid;
+};
+
+static sChallenge Challenges[LEIF_WEBAUTH_CHALLENGE_SLOTS];
+static uint8_t uChallengeNext=0;
+
+static void PushChallenge(const String & strNonce, const String & strOpaque)
+{
+	sChallenge & c=Challenges[uChallengeNext];
+
+	uChallengeNext=(uChallengeNext+1)%LEIF_WEBAUTH_CHALLENGE_SLOTS;
+
+	snprintf(c.szNonce,sizeof(c.szNonce),"%s",strNonce.c_str());
+	snprintf(c.szOpaque,sizeof(c.szOpaque),"%s",strOpaque.c_str());
+	c.uIssuedMs=millis();
+	c.uNcHigh=0;
+	c.uNcSeen=0;
+	c.bValid=true;
+}
+
+static sChallenge * FindChallenge(const String & strNonce, const String & strOpaque)
+{
+	for(size_t i=0;i<LEIF_WEBAUTH_CHALLENGE_SLOTS;i++)
+	{
+		sChallenge & c=Challenges[i];
+
+		if(!c.bValid)
+		{
+			continue;
+		}
+
+		if((uint32_t) (millis()-c.uIssuedMs) > (uint32_t) LEIF_WEBAUTH_CHALLENGE_LIFETIME_MS)
+		{
+			c.bValid=false;
+			continue;
+		}
+
+		if(strNonce==c.szNonce && strOpaque==c.szOpaque)
+		{
+			return &c;
+		}
+	}
+
+	return NULL;
+}
+
+//The client's nc counts its requests against one challenge, and the stock server parses it and
+//then ignores it -- which is what lets a captured Authorization header be replayed. Demanding
+//that it climb strictly would be wrong here, because one challenge is answered over several
+//connections and those answers can reach a single-threaded server out of order. So this is the
+//usual anti-replay window: each value is accepted once, and only within 32 of the highest seen.
+static bool AcceptNc(sChallenge & c, uint32_t uNc)
+{
+	if(!uNc)
+	{
+		//nc counts from one. Zero is a broken client, or an attempt to reopen the window.
+		return false;
+	}
+
+	if(!c.uNcHigh)
+	{
+		c.uNcHigh=uNc;
+		c.uNcSeen=1;
+		return true;
+	}
+
+	if(uNc>c.uNcHigh)
+	{
+		uint32_t uShift=uNc-c.uNcHigh;
+
+		//A shift of 32 or more is undefined, and means nothing inside the window survives.
+		c.uNcSeen = uShift>=32 ? 1 : ((c.uNcSeen<<uShift)|1);
+		c.uNcHigh=uNc;
+		return true;
+	}
+
+	uint32_t uBack=c.uNcHigh-uNc;
+
+	if(uBack>=32 || (c.uNcSeen & (1UL<<uBack)))
+	{
+		return false;
+	}
+
+	c.uNcSeen |= 1UL<<uBack;
+	return true;
+}
+
+//---------------------------------------------------------------------------------------------
 //The gate
 //---------------------------------------------------------------------------------------------
 
@@ -480,12 +584,14 @@ bool LeifWebAuthGate()
 		return false;
 	}
 
-	if(server.LeifCheckDigestAuth(strUsername,strRealm,strH1))
+	bool bStale=false;
+
+	if(server.LeifCheckDigestAuth(strUsername,strRealm,strH1,bStale))
 	{
 		return true;
 	}
 
-	server.requestAuthentication(DIGEST_AUTH,strRealm.c_str(),F("Authentication required.\n"));
+	server.LeifSendDigestChallenge(strRealm,bStale);
 	return false;
 }
 
@@ -528,9 +634,11 @@ static const char * MethodName(HTTPMethod method)
 	}
 }
 
-bool LeifWebServer::LeifCheckDigestAuth(const String & strUser, const String & strWantRealm, const String & strWantH1)
+bool LeifWebServer::LeifCheckDigestAuth(const String & strUser, const String & strWantRealm, const String & strWantH1, bool & bStale)
 {
 	static const char szAuthHeader[]="Authorization";
+
+	bStale=false;
 
 	if(!hasHeader(szAuthHeader))
 	{
@@ -567,13 +675,6 @@ bool LeifWebServer::LeifCheckDigestAuth(const String & strUser, const String & s
 		return false;
 	}
 
-	//The nonce and opaque must be the pair THIS server last issued. Without this check a
-	//captured Authorization header would authenticate forever.
-	if(strNonce!=_snonce || strOpaque!=_sopaque)
-	{
-		return false;
-	}
-
 	//The digest covers the URI, so a response captured for one path cannot be replayed against
 	//another. The header's uri may carry a query string where _currentUri does not.
 	String strUriPath=strReqUri;
@@ -591,6 +692,7 @@ bool LeifWebServer::LeifCheckDigestAuth(const String & strUser, const String & s
 
 	String strH2=Md5Hex(String(MethodName(_currentMethod))+":"+strReqUri);
 	String strExpected;
+	uint32_t uNc=1;
 
 	if(strAuth.indexOf("qop=auth")!=-1 || strAuth.indexOf("qop=\"auth\"")!=-1)
 	{
@@ -603,13 +705,67 @@ bool LeifWebServer::LeifCheckDigestAuth(const String & strUser, const String & s
 		}
 
 		strExpected=Md5Hex(strWantH1+":"+strNonce+":"+strNc+":"+strCnonce+":auth:"+strH2);
+		uNc=strtoul(strNc.c_str(),NULL,16);
 	}
 	else
 	{
+		//RFC 2069, which has no request counter at all. Spending the whole challenge on this one
+		//answer is the only replay protection the client has left us, so take it: nc 1 marks the
+		//window used and a second copy of the same header lands on it.
 		strExpected=Md5Hex(strWantH1+":"+strNonce+":"+strH2);
 	}
 
-	return strResponse.equalsConstantTime(strExpected);
+	if(!strResponse.equalsConstantTime(strExpected))
+	{
+		return false;
+	}
+
+	//Checked AFTER the hash, which is what makes the stale answer safe to give: the response is
+	//known good by this point, so anything still wrong is the challenge rather than the password.
+	//⛔ Telling a client with the WRONG password that its challenge was stale makes it retry
+	//silently forever instead of asking the user.
+	sChallenge * pChallenge=FindChallenge(strNonce,strOpaque);
+
+	if(!pChallenge)
+	{
+		bStale=true;
+		return false;
+	}
+
+	if(!AcceptNc(*pChallenge,uNc))
+	{
+		bStale=true;
+		return false;
+	}
+
+	return true;
+}
+
+void LeifWebServer::LeifSendDigestChallenge(const String & strWantRealm, bool bStale)
+{
+	//The base class's own copies are kept in step so WebServer::authenticate() does not start
+	//answering with a nonce this server never issued.
+	_srealm=strWantRealm;
+	_snonce=_getRandomHexString();
+	_sopaque=_getRandomHexString();
+
+	PushChallenge(_snonce,_sopaque);
+
+	String strValue="Digest realm=\"";
+	strValue+=_srealm;
+	strValue+="\", qop=\"auth\", nonce=\"";
+	strValue+=_snonce;
+	strValue+="\", opaque=\"";
+	strValue+=_sopaque;
+	strValue+="\"";
+
+	if(bStale)
+	{
+		strValue+=", stale=true";
+	}
+
+	sendHeader(F("WWW-Authenticate"),strValue);
+	send(401,F("text/plain"),F("Authentication required.\n"));
 }
 
 #endif
