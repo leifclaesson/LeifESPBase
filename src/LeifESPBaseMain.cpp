@@ -2296,6 +2296,10 @@ void LeifSetupBegin()
 	//label -- documented in the handler comment above rather than in every board's flash.
 #endif
 
+	//⛔ After LeifWebAuthBegin(), so its enable endpoint comes out of LeifWebServer::on()
+	//wrapped in the authentication gate. That gate IS the authentication on firmware update.
+	LeifOtaWindowBegin();
+
 	server.on("/sysinfo", []()
 	{
 #ifdef MMU_EXTERNAL_HEAP
@@ -2428,6 +2432,8 @@ void LeifSetupBegin()
 				sprintf(temp, "OTA lands in.....: nowhere -- single-app layout, no over-the-air update possible\n");
 			}
 			s += temp;
+
+			LeifOtaWindowAppendStatus(s);
 
 			//App slots first, then data. ⛔ Not one pass over ESP_PARTITION_TYPE_ANY -- that value
 			//arrived with IDF 4, so it does not compile for the core 1.0.6 fleet, which is exactly
@@ -2620,6 +2626,8 @@ void LeifSetupBegin()
 		s.concat(PSTR("</table>"));
 #endif
 
+		LeifOtaWindowAppendToolsSection(s);
+
 		s.concat(PSTR("<h3>Console commands</h3>"));
 
 		String strCommands;
@@ -2710,7 +2718,13 @@ void LeifSetupEnd()
 
 	server.begin();
 #ifndef NO_OTA
-	ArduinoOTA.begin();
+	//⛔ Not unconditional any more. Where the window is compiled in it starts CLOSED, so
+	//nothing binds port 8266 until somebody with the web password opens it; where it is not,
+	//LeifOtaWindowIsOpen() is a constant true and this is the old behaviour.
+	if(LeifOtaWindowIsOpen())
+	{
+		ArduinoOTA.begin();
+	}
 #endif
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -3150,6 +3164,7 @@ void LeifLoop()
 	ulLastLoopMillis = millis();
 
 #ifndef NO_OTA
+	LeifOtaWindowLoop();
 	ArduinoOTA.handle();
 	if(bUpdatingOTA) return;
 #endif

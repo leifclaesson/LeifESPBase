@@ -29,6 +29,7 @@
 #include "LeifESPBaseWOL.h"
 #include "LeifESPBaseAP.h"
 #include "LeifWebAuth.h"
+#include "LeifOtaWindow.h"
 #include "LinkStubs.h"
 
 

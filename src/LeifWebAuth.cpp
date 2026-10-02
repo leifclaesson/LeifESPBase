@@ -390,8 +390,67 @@ static void HandleSetupSave()
 	server.send(200,F("text/html"),s);
 }
 
+//---------------------------------------------------------------------------------------------
+//The recovery path
+//---------------------------------------------------------------------------------------------
+//A forgotten password must be recoverable, or the first customer to lose one has a brick. It
+//must ALSO need physical access, or it is a bypass of everything above.
+//
+//⛔ SERIAL ONLY, and that is the whole design. //Leif, 2026-10-01, ruling that the telnet
+//console may stay open: "the console doesn't allow you to control anything, does it? ... you're
+//not supposed to open that to the internet to begin with." That ruling holds only while the
+//console controls nothing -- so putting `webpass clear` on telnet would retroactively falsify
+//the premise he decided on, and hand the network a way to drop the gate. The dispatcher tells
+//the two sources apart, so this refuses over telnet and says why.
+static void WebPassCommand(const String & strCommand, eCommandLineSource source)
+{
+	String str=strCommand;
+	str.trim();
+
+	if(str!="webpass" && !str.startsWith("webpass "))
+	{
+		return;
+	}
+
+	String strArg=str.substring(7);
+	strArg.trim();
+
+	if(!strArg.length())
+	{
+		if(LeifWebAuthIsConfigured())
+		{
+			csprintf(PSTR("web password is SET, user \"%s\"\n"),LeifWebAuthGetUsername().c_str());
+		}
+		else
+		{
+			csprintf(PSTR("web password is NOT set -- every page shows the setup form\n"));
+		}
+
+		return;
+	}
+
+	if(strArg!="clear")
+	{
+		csprintf(PSTR("usage: webpass          show whether a password is set\n"));
+		csprintf(PSTR("       webpass clear    forget it (serial console only)\n"));
+		return;
+	}
+
+	if(source!=eCommandLineSource_Serial)
+	{
+		csprintf(PSTR("webpass clear is refused over telnet -- it needs the serial console, so\n"));
+		csprintf(PSTR("that clearing the web password always costs physical access to the board\n"));
+		return;
+	}
+
+	LeifWebAuthClear();
+}
+
 void LeifWebAuthRegisterSetupPage()
 {
+	LeifRegisterCommandCallback(WebPassCommand);
+	LeifDeclareCommand(PSTR("webpass"),PSTR("show whether a web password is set; 'webpass clear' forgets it, serial only"));
+
 	//⛔ Registered through the BASE class on purpose: these two are the only endpoints that must
 	//answer while the device has no password, so they cannot go through the gate that would send
 	//them back to themselves forever.
